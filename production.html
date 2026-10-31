@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>14 · Production & explainability · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="production">
+<main>
+  <div class="eyebrow">Lesson 14 · Week 8 · What separates DS II from DS I</div>
+  <h1>Production, monitoring &amp; explainability</h1>
+  <p class="lede">A model is only valuable once it's serving decisions reliably. DS II interviews check that you've thought about <b>latency, drift, calibration, explainability and fairness</b>, not just accuracy.</p>
+  <div class="toc"><a href="#serve">Serving patterns</a><a href="#fast">Making it fast</a><a href="#drift">Drift live</a><a href="#calib">Calibration</a><a href="#xai">Explainability</a><a href="#fair">Fairness</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="serve">Serving patterns</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Pattern</th><th>Example</th><th>Notes</th></tr>
+    <tr><td><b>Batch</b></td><td>Nightly churn scores, monthly credit-line reviews</td><td>Simplest; scores written to a table</td></tr>
+    <tr><td><b>Online (request/response)</b></td><td>Fraud score at card swipe, search ranking</td><td>Latency SLA (p95/p99), feature store for fresh features</td></tr>
+    <tr><td><b>Streaming</b></td><td>Velocity features from Kafka/Flink</td><td>Train/serve feature parity is the hard part</td></tr>
+    <tr><td><b>Edge / on-device</b></td><td>Liveness check in the KYC app</td><td>Quantised small models (TFLite, Core ML)</td></tr>
+  </table></div>
+  <div class="callout trap"><div class="tag">⚠️ The #1 production bug: train/serve skew</div><p>Features computed one way in a training notebook (SQL over a full month) and another way online (a streaming approximation). Use a <b>feature store</b> or shared feature code, and log the features you actually served so you can train on them.</p></div>
+
+  <h2 id="fast">Making deep models fast and small</h2>
+  <div class="grid">
+    <div class="card"><h4>Quantisation</h4><p>FP32 → INT8 (or 4-bit for LLMs). About 4× smaller and 2–4× faster with a small accuracy loss. Post-training, or quantisation-aware training.</p></div>
+    <div class="card"><h4>Knowledge distillation</h4><p>Train a small "student" to match a big "teacher's" soft probabilities. DistilBERT keeps ~97% of BERT's quality and is ~60% faster.</p></div>
+    <div class="card"><h4>Pruning</h4><p>Remove low-magnitude weights or whole heads/channels. Structured pruning gives real speed-ups.</p></div>
+    <div class="card"><h4>Compilation &amp; runtimes</h4><p>ONNX Runtime, TensorRT, <code>torch.compile</code>; dynamic batching on the server (Triton, TorchServe).</p></div>
+    <div class="card"><h4>Caching</h4><p>Precompute embeddings (items, customers); cache frequent results; KV cache for LLMs.</p></div>
+  </div>
+
+  <h2 id="drift">Monitoring drift</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>The world changes after you deploy: a new UPI feature, a festival sale, fraudsters changing tactics. <b>Data drift</b>: the inputs look different. <b>Concept drift</b>: the same inputs now mean something different (the relation to the target changed). Labels often arrive weeks later, so you watch the inputs and the score distribution as early warnings.</p></div>
+  <div class="widget">
+    <div class="widget-title">Population Stability Index (PSI)</div>
+    <div class="widget-sub">Shift today's distribution of a feature (e.g. transaction amount) away from the training baseline. Rule of thumb: PSI &lt; 0.1 is stable, 0.1–0.25 needs watching, &gt; 0.25 means act.</div>
+    <div class="controls">
+      <div class="control"><label>mean shift <b id="mv"></b></label><input type="range" id="m" min="-1.5" max="1.5" step="0.05" value="0.3"></div>
+      <div class="control"><label>spread change (×) <b id="sv"></b></label><input type="range" id="s" min="0.5" max="2" step="0.05" value="1"></div>
+    </div>
+    <canvas id="pc"></canvas>
+    <div class="readout" id="pout"></div>
+  </div>
+  <div class="callout math"><div class="tag">📐 PSI</div><div class="formula">PSI = Σ<sub>bins</sub> (a<sub>i</sub> − e<sub>i</sub>) · ln(a<sub>i</sub> / e<sub>i</sub>)</div><p>e = expected (training) share per bin, a = actual (production) share. Also monitor the prediction distribution, missing rates, latency, and the business KPI. Once labels arrive, track the real metric over time.</p></div>
+
+  <h2 id="calib">Calibration: are your probabilities honest?</h2>
+  <p>A model with great AUC can still output 0.9 for things that are fraud only 40% of the time. This matters whenever probabilities feed decisions: expected loss = PD × LGD × EAD, bid prices, thresholds. Deep nets are often <b>over-confident</b>. Fix with <b>temperature scaling</b> (one parameter fitted on validation data), Platt scaling or isotonic regression. Check with reliability diagrams and the Brier score. Resampling or class weights also distort probabilities, so re-calibrate afterwards.</p>
+
+  <h2 id="xai">Explainability for deep models</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Method</th><th>What it does</th><th>Good for</th></tr>
+    <tr><td><b>SHAP</b> (Deep/Gradient/Kernel)</td><td>Fair attribution of a prediction to features (Shapley values)</td><td>Tabular, adverse-action reasons</td></tr>
+    <tr><td><b>Integrated Gradients</b></td><td>Accumulates gradients along a path from a baseline input to the real input</td><td>Text tokens, images, any differentiable model</td></tr>
+    <tr><td><b>Grad-CAM</b></td><td>Heatmap of the image regions driving a CNN's class</td><td>Checking the model looks at the dent, not the watermark</td></tr>
+    <tr><td><b>Attention weights</b></td><td>Which tokens the model attended to</td><td>A hint, <b>not</b> a faithful explanation; don't present it as one</td></tr>
+    <tr><td>Surrogates / LIME</td><td>Fit a simple model locally around one prediction</td><td>Quick local intuition (unstable)</td></tr>
+  </table></div>
+
+  <h2 id="fair">Fairness &amp; regulation (lending, insurance, hiring)</h2>
+  <ul>
+    <li>Don't use protected attributes, and watch <b>proxies</b> (pincode can proxy religion or caste; first name can proxy gender).</li>
+    <li>Measure: approval-rate ratio across groups (disparate impact), equal opportunity (TPR parity), and calibration within groups.</li>
+    <li>Document: model cards, data lineage, validation reports for model-risk management (SR 11-7-style governance in banks; RBI and other regulators expect explainability for credit decisions).</li>
+    <li>Keep a human in the loop for adverse decisions, and provide reason codes.</li>
+  </ul>
+
+  <h2 id="code">Code</h2>
+  <script type="text/plain" class="snippet" data-title="export to ONNX + dynamic INT8 quantisation">
+    import torch
+    model.eval()
+    dummy = torch.randn(1, N_FEATURES)
+    torch.onnx.export(model, dummy, "model.onnx", input_names=["x"], output_names=["logit"],
+                      dynamic_axes={"x": {0: "batch"}})
+
+    # quick CPU win for Linear/LSTM-heavy models
+    qmodel = torch.ao.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
+  </script>
+  <script type="text/plain" class="snippet" data-title="temperature scaling (calibration)">
+    class TempScale(torch.nn.Module):
+        def __init__(self): super().__init__(); self.T = torch.nn.Parameter(torch.ones(1))
+        def forward(self, logits): return logits / self.T
+
+    ts = TempScale()
+    opt = torch.optim.LBFGS([ts.T], lr=0.01, max_iter=100)
+    def closure():
+        opt.zero_grad()
+        loss = torch.nn.functional.cross_entropy(ts(val_logits), val_labels)
+        loss.backward(); return loss
+    opt.step(closure)            # fit T on VALIDATION logits, then apply to all future logits
+  </script>
+  <script type="text/plain" class="snippet" data-title="SHAP + PSI">
+    import shap, numpy as np
+    explainer = shap.GradientExplainer(model, background_tensor)   # ~100-500 reference rows
+    shap_vals = explainer.shap_values(x_to_explain)
+
+    def psi(expected, actual, bins=10):
+        cuts = np.quantile(expected, np.linspace(0, 1, bins + 1)); cuts[0], cuts[-1] = -np.inf, np.inf
+        e = np.histogram(expected, cuts)[0] / len(expected) + 1e-6
+        a = np.histogram(actual, cuts)[0] / len(actual) + 1e-6
+        return np.sum((a - e) * np.log(a / e))
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Your fraud model's precision dropped 30% over two months. How do you investigate?</summary><div class="ans"><p>Check the pipeline first (feature nulls, schema changes, upstream outages, train/serve skew). Then look at data drift per feature (PSI) and score-distribution shift. Slice performance by segment, channel and merchant to localise the drop. Check for concept drift (a new fraud pattern) through analyst feedback. Fix: retrain on recent data, add features for the new pattern, adjust the threshold, and set up automated drift alerts and a retraining cadence.</p></div></details>
+  <details class="qa"><summary>How do you serve a BERT classifier under 20 ms on CPU?</summary><div class="ans"><p>Distil to a smaller model (MiniLM/DistilBERT), shorten max_length, quantise to INT8, export to ONNX Runtime, use dynamic batching, cache frequent inputs. Benchmark p95, not the mean.</p></div></details>
+  <details class="qa"><summary>Why aren't attention weights a reliable explanation?</summary><div class="ans"><p>Attention shows where information was mixed in one layer, not what caused the output. Different attention patterns can give the same prediction, and value vectors and later layers transform things further. Use gradient-based attributions (Integrated Gradients) or SHAP for faithful explanations.</p></div></details>
+  <details class="qa"><summary>How do you A/B test a new model safely?</summary><div class="ans"><p>Shadow mode first (score but don't act) to compare distributions and latency. Then a small randomised traffic split with a pre-registered primary metric, guardrails (false declines, latency, complaints), power analysis for sample size, and a ramp-up plan with rollback.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const g=(x,m,s)=>Math.exp(-((x-m)**2)/(2*s*s))/(s*Math.sqrt(2*Math.PI));
+  const cdf=(x,m,s)=>{const z=(x-m)/(s*Math.SQRT2);const t=1/(1+.3275911*Math.abs(z));const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*Math.exp(-z*z);return .5*(1+(z>=0?y:-y));};
+  function draw(){
+    const m=+$('m').value,s=+$('s').value;$('mv').textContent=m.toFixed(2);$('sv').textContent=s.toFixed(2)+'×';
+    const {ctx,w,h,col}=DLP_canvas($('pc'),200);ctx.clearRect(0,0,w,h);
+    const X=x=>w/2+x*(w/8),Y=v=>h-20-v*(h-35)/0.85;
+    [[0,1,col('--accent'),'rgba(67,56,202,.18)'],[m,s,'#e2554f','rgba(226,85,79,.18)']].forEach(([mu,sd,c,f])=>{ctx.fillStyle=f;ctx.strokeStyle=c;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(0,h-20);for(let px=0;px<=w;px+=2){const x=(px-w/2)/(w/8);ctx.lineTo(px,Y(g(x,mu,sd)));}ctx.lineTo(w,h-20);ctx.fill();ctx.stroke();});
+    const edges=[-Infinity];for(let i=1;i<10;i++){let lo=-6,hi=6;for(let k=0;k<40;k++){const mid=(lo+hi)/2;cdf(mid,0,1)<i/10?lo=mid:hi=mid;}edges.push(lo);}edges.push(Infinity);
+    let psi=0;for(let i=0;i<10;i++){const e=.1;const a=Math.max(1e-6,(edges[i+1]===Infinity?1:cdf(edges[i+1],m,s))-(edges[i]===-Infinity?0:cdf(edges[i],m,s)));psi+=(a-e)*Math.log(a/e);}
+    ctx.fillStyle=col('--muted');ctx.font='12px ui-monospace';ctx.fillText('■ training baseline',10,16);ctx.fillStyle='#e2554f';ctx.fillText('■ production today',150,16);
+    const verdict=psi<.1?'<span style="color:var(--green)">stable</span>':psi<.25?'<span style="color:var(--amber)">moderate shift: investigate</span>':'<span style="color:var(--coral)">major shift: retrain / recalibrate</span>';
+    $('pout').innerHTML=`PSI = <b>${psi.toFixed(3)}</b> → ${verdict}`;
+  }
+  ['m','s'].forEach(id=>$(id).addEventListener('input',draw));draw();window.addEventListener('resize',draw);window.addEventListener('dlp-theme',draw);
+})();
+</script>
+</body>
+</html>

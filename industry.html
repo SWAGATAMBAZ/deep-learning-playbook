@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>12 · Industry playbook · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="industry">
+<main>
+  <div class="eyebrow">Lesson 12 · Week 8 · Domain fluency</div>
+  <h1>Industry playbook</h1>
+  <p class="lede">Interviewers at a bank don't want "I'd use a transformer". They want <b>the problem, the data, the model and why, the metric the business cares about, and the trap</b>. Here's that for each major industry. Pick your target industry's tab and learn it cold.</p>
+
+  <div data-tabs>
+    <div class="tabs">
+      <button class="on">💳 Fintech &amp; payments</button><button>🏦 Banking &amp; lending</button><button>🛒 E-commerce &amp; retail</button><button>🛡️ Insurance</button><button>🚚 Logistics &amp; q-commerce</button><button>🏥 Healthcare</button><button>📡 Telecom</button><button>📣 Ads &amp; marketing</button><button>🏭 Manufacturing</button>
+    </div>
+
+    <div class="tab-panel on">
+      <h3>Fintech &amp; payments (UPI apps, wallets, payment gateways, neo-banks)</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Use case</th><th>Model choice &amp; why</th><th>Metric</th><th>Trap</th></tr>
+        <tr><td><b>Real-time transaction fraud</b></td><td>GBDT on velocity features + GRU/transformer over the last N transactions (behavioural context) + graph features from shared devices. Ensemble.</td><td>Recall @ fixed FPR, $ fraud caught, false-decline rate</td><td>Latency budget (&lt;50 ms); label delay (chargebacks arrive weeks later); adversarial drift</td></tr>
+        <tr><td><b>Account takeover / bot detection</b></td><td>Sequence models on login and session events; device and behavioural biometrics (typing, swipe) with 1D-CNN/LSTM</td><td>Detection rate, user friction</td><td>Privacy; not blocking legitimate new devices</td></tr>
+        <tr><td><b>Mule / fraud-ring detection</b></td><td>GNN (GraphSAGE/GAT) on the account–device–UPI-ID–IP graph</td><td>Precision on top-K investigated</td><td>Temporal leakage when building the graph</td></tr>
+        <tr><td><b>Merchant categorisation from transaction text</b></td><td>Fine-tuned small BERT on merchant strings, or LLM labels distilled into it</td><td>Macro-F1</td><td>Noisy, abbreviated strings</td></tr>
+        <tr><td><b>Support chatbot / dispute triage</b></td><td>RAG over FAQs and policies + intent classifier; LLM summarisation for agents</td><td>Deflection rate, CSAT, faithfulness</td><td>Hallucinated policy; PII handling</td></tr>
+      </table></div>
+    </div>
+
+    <div class="tab-panel">
+      <h3>Banking &amp; lending</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Use case</th><th>Model choice &amp; why</th><th>Metric</th><th>Trap</th></tr>
+        <tr><td><b>Credit scoring / PD</b></td><td>GBDT or scorecard (LR) for explainability and regulation. DL for <i>alternative data</i>: transaction-sequence embeddings, bank statement parsing, then fed into GBDT.</td><td>AUC/Gini, KS, calibration, approval rate at fixed bad rate</td><td>Adverse-action reasons, fairness, reject inference, out-of-time validation</td></tr>
+        <tr><td><b>AML transaction monitoring</b></td><td>Rules + GBDT for alert scoring; GNN for layering/structuring patterns; autoencoders for unknown typologies</td><td>SAR conversion rate, false-positive reduction</td><td>Extreme imbalance; auditability</td></tr>
+        <tr><td><b>KYC document processing</b></td><td>CNN document classifier + OCR + LayoutLM/Donut extraction; face-match Siamese network; liveness detection</td><td>Field-level accuracy, STP rate</td><td>Deepfakes and spoofing; poor-quality phone photos</td></tr>
+        <tr><td><b>Churn / attrition</b></td><td>GBDT; sequence models over monthly activity if history is rich</td><td>Lift in top decile, retained balance</td><td>Predicting churn ≠ preventing it, so use uplift models</td></tr>
+        <tr><td><b>Next-best-offer / cross-sell</b></td><td>Multi-task NN or per-product propensity models + uplift; eligibility rules</td><td>Incremental conversion (A/B)</td><td>Targeting people who'd buy anyway</td></tr>
+        <tr><td><b>Collections prioritisation</b></td><td>GBDT/NN for cure probability + optimisation of the contact strategy</td><td>Roll-rate reduction, $ recovered</td><td>Regulatory contact rules</td></tr>
+      </table></div>
+    </div>
+
+    <div class="tab-panel">
+      <h3>E-commerce &amp; retail</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Use case</th><th>Model choice &amp; why</th><th>Metric</th><th>Trap</th></tr>
+        <tr><td><b>Recommendations</b> (home feed, similar items)</td><td>Two-tower retrieval → DCN/DLRM/DIN ranker → re-rank; SASRec for session-based</td><td>Recall@K, NDCG offline; CTR, GMV/session online</td><td>Position and popularity bias, cold start</td></tr>
+        <tr><td><b>Search ranking</b></td><td>Hybrid BM25 + dense retrieval; learning-to-rank (LambdaMART or cross-encoder) with query understanding</td><td>NDCG, null-search rate, search conversion</td><td>Spelling and vernacular queries; latency</td></tr>
+        <tr><td><b>Demand forecasting</b></td><td>LightGBM global model, or TFT/DeepAR for probabilistic forecasts across SKU × store</td><td>WAPE, bias, stockout rate</td><td>Promotions and stockouts censor true demand</td></tr>
+        <tr><td><b>Product categorisation &amp; attribute extraction</b></td><td>Multimodal (image CNN/ViT + text BERT), CLIP embeddings; LLM extraction</td><td>Accuracy per category</td><td>Long-tail categories</td></tr>
+        <tr><td><b>Visual search</b></td><td>CLIP/Siamese image embeddings + ANN index</td><td>Recall@K</td><td>Background and lighting variation</td></tr>
+        <tr><td><b>Review mining</b></td><td>Aspect-based sentiment with a fine-tuned encoder; LLM summaries</td><td>F1, human rating</td><td>Fake reviews</td></tr>
+        <tr><td><b>Dynamic pricing</b></td><td>Demand-elasticity models (GBDT/NN) + optimisation; bandits</td><td>Margin, revenue</td><td>Causal vs correlational elasticity</td></tr>
+      </table></div>
+    </div>
+
+    <div class="tab-panel">
+      <h3>Insurance</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Use case</th><th>Model choice &amp; why</th><th>Metric</th><th>Trap</th></tr>
+        <tr><td><b>Motor claim damage assessment</b></td><td>CNN segmentation (U-Net / Mask R-CNN) of damaged parts + severity classifier from photos</td><td>Part-level F1, estimate error</td><td>Photo quality; fraud via reused images</td></tr>
+        <tr><td><b>Claims fraud</b></td><td>GBDT + text features from claim notes (BERT) + graph of claimants, garages, doctors</td><td>Hit rate of investigations</td><td>Label bias (only investigated claims are labelled)</td></tr>
+        <tr><td><b>Underwriting / risk pricing</b></td><td>GLM/GBDT (regulated); DL for telematics sequences (driving behaviour)</td><td>Gini, loss ratio</td><td>Fairness, explainability for regulators</td></tr>
+        <tr><td><b>Document intake</b></td><td>OCR + LayoutLM / LLM extraction from medical bills and policy forms</td><td>Field accuracy, STP</td><td>Handwriting</td></tr>
+      </table></div>
+    </div>
+
+    <div class="tab-panel">
+      <h3>Logistics, quick-commerce &amp; food delivery</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Use case</th><th>Model choice &amp; why</th><th>Metric</th><th>Trap</th></tr>
+        <tr><td><b>ETA prediction</b></td><td>GBDT, or DL with route/graph features (GNN over road segments) and real-time traffic</td><td>MAE, % within ±X min</td><td>Asymmetric cost: late is worse than early</td></tr>
+        <tr><td><b>Dark-store demand</b></td><td>Global forecaster (LightGBM / N-HiTS / TFT) at SKU × store × hour</td><td>WAPE, availability</td><td>Intermittent demand, weather and festival spikes</td></tr>
+        <tr><td><b>Address geocoding / cleaning</b></td><td>Seq2seq or NER on messy addresses; embeddings for matching</td><td>Delivery success rate</td><td>Vernacular, landmark-based addresses</td></tr>
+        <tr><td><b>Dispatch / assignment</b></td><td>Predictive models + optimisation; RL in mature systems</td><td>Cost per order, SLA</td><td>Simulation vs reality gap</td></tr>
+      </table></div>
+    </div>
+
+    <div class="tab-panel">
+      <h3>Healthcare &amp; pharma</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Use case</th><th>Model choice &amp; why</th><th>Metric</th><th>Trap</th></tr>
+        <tr><td><b>Medical imaging</b></td><td>CNN/ViT with transfer learning; U-Net for segmentation</td><td>Sensitivity at fixed specificity, AUC, Dice</td><td>Small data, site/scanner shift, label noise</td></tr>
+        <tr><td><b>Clinical notes NLP</b></td><td>Domain models (BioBERT / ClinicalBERT) for NER, coding; LLM summaries</td><td>Entity F1</td><td>PHI privacy, negation ("no sign of…")</td></tr>
+        <tr><td><b>Readmission / risk prediction</b></td><td>GBDT; transformers over EHR event sequences</td><td>AUC, calibration</td><td>Leakage from future codes</td></tr>
+      </table></div>
+    </div>
+
+    <div class="tab-panel">
+      <h3>Telecom</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Use case</th><th>Model choice &amp; why</th><th>Metric</th><th>Trap</th></tr>
+        <tr><td><b>Churn</b></td><td>GBDT + sequence embeddings of usage and recharge history</td><td>Lift, retained revenue</td><td>Uplift vs propensity</td></tr>
+        <tr><td><b>Network anomaly / fault prediction</b></td><td>LSTM/TCN autoencoders on KPI time series</td><td>Precision of alerts, lead time</td><td>Seasonality creating false alarms</td></tr>
+        <tr><td><b>Call-centre analytics</b></td><td>Speech-to-text + intent/sentiment classification + LLM summaries</td><td>AHT reduction, CSAT</td><td>Code-mixed languages</td></tr>
+      </table></div>
+    </div>
+
+    <div class="tab-panel">
+      <h3>Ads, marketing &amp; media</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Use case</th><th>Model choice &amp; why</th><th>Metric</th><th>Trap</th></tr>
+        <tr><td><b>CTR / CVR prediction</b></td><td>DeepFM / DCN-v2 / DLRM with massive embedding tables; multi-task (ESMM) for CVR</td><td>Log-loss, AUC, calibration</td><td>Calibration matters for bidding; sample selection bias</td></tr>
+        <tr><td><b>Uplift / incrementality</b></td><td>Meta-learners (T/X-learner) with NN or GBDT bases; DragonNet</td><td>Qini / uplift curve</td><td>Needs randomised data</td></tr>
+        <tr><td><b>Lookalike audiences</b></td><td>User embeddings + similarity, or PU-learning</td><td>Conversion of lookalikes</td><td>Privacy and consent</td></tr>
+        <tr><td><b>Creative generation</b></td><td>LLMs for copy, diffusion for images, with brand guardrails</td><td>CTR in A/B</td><td>Brand safety, IP</td></tr>
+      </table></div>
+    </div>
+
+    <div class="tab-panel">
+      <h3>Manufacturing &amp; energy</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Use case</th><th>Model choice &amp; why</th><th>Metric</th><th>Trap</th></tr>
+        <tr><td><b>Visual defect detection</b></td><td>CNN classification/segmentation; anomaly-detection CNNs (PatchCore) when defects are rare</td><td>Recall on defects, false-reject rate</td><td>Very few defect images</td></tr>
+        <tr><td><b>Predictive maintenance</b></td><td>LSTM/TCN on sensor streams for remaining useful life; autoencoders for anomalies</td><td>Lead time, precision</td><td>Few failure events; censoring</td></tr>
+        <tr><td><b>Load / energy forecasting</b></td><td>TFT / N-HiTS with weather covariates</td><td>MAPE/WAPE at peak</td><td>Weather forecast error propagates</td></tr>
+      </table></div>
+    </div>
+  </div>
+
+  <h2>The universal answer template</h2>
+  <div class="callout win"><div class="tag">✅ Use this structure for any "how would you build X at our company" question</div>
+  <ol>
+    <li><b>Business goal and constraint</b>: what decision does the model drive, and what does a wrong prediction cost (false positive vs false negative)? Latency? Regulation?</li>
+    <li><b>Data</b>: what's available at prediction time, how labels are created, delay and bias in labels.</li>
+    <li><b>Baseline</b>: rules or a GBDT. Then <b>why DL</b> (sequences, text, images, graphs, scale).</li>
+    <li><b>Model and training</b>: architecture, loss, imbalance handling, validation split.</li>
+    <li><b>Metrics</b>: offline metric tied to the business metric, then an online A/B test with guardrails.</li>
+    <li><b>Deploy and monitor</b>: latency, drift, retraining, explainability, fairness.</li>
+  </ol></div>
+</main>
+</body>
+</html>

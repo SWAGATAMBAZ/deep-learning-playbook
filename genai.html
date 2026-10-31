@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>11 · Generative AI & LLMs · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+<style>.bars{display:grid;gap:6px;margin-top:10px}.bars div{display:flex;align-items:center;gap:10px;font-size:14.5px}.bars .b{height:12px;border-radius:99px;background:var(--accent);transition:width .2s}.bars .cut{opacity:.2}</style>
+</head>
+<body data-page="genai">
+<main>
+  <div class="eyebrow">Lesson 11 · Week 7 · Now in most DS loops</div>
+  <h1>Generative AI &amp; LLMs</h1>
+  <p class="lede">You don't need to train GPT. A DS II is expected to know <b>how generative models work at a high level</b>, and to choose sensibly between <b>prompting, RAG and fine-tuning</b>, evaluate LLM outputs, and control cost.</p>
+  <div class="toc"><a href="#gen">VAE · GAN · Diffusion</a><a href="#llm">How LLMs are built</a><a href="#sample">Sampling live</a><a href="#choose">Prompt vs RAG vs fine-tune</a><a href="#rag">RAG</a><a href="#lora">LoRA</a><a href="#eval">Evaluation</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="gen">Three generative families, one paragraph each</h2>
+  <div class="grid">
+    <div class="card"><div class="kicker">VAE</div><h4>Compress → sample → decode</h4><p>An encoder maps data to a smooth latent distribution and a decoder rebuilds it. Sample the latent to generate. Training is stable, but outputs tend to be blurry. Used for synthetic tabular data and anomaly scores.</p></div>
+    <div class="card"><div class="kicker">GAN</div><h4>Forger vs detective</h4><p>A generator makes fakes and a discriminator tries to spot them, and both improve together (a min-max game). Outputs are sharp, but training is unstable and prone to <b>mode collapse</b> (only producing a few kinds of output). CTGAN is used for synthetic tabular data such as rare fraud cases.</p></div>
+    <div class="card"><div class="kicker">Diffusion</div><h4>Learn to un-noise</h4><p>Gradually add noise to images until they're pure static, and train a network (usually a U-Net or transformer) to predict and remove the noise at each step. To generate, start from noise and denoise step by step. This powers Stable Diffusion and modern image and video generators. Highest quality, but slower sampling.</p></div>
+  </div>
+
+  <h2 id="llm">How an LLM is built</h2>
+  <div class="grid">
+    <div class="card"><div class="kicker">1 · Pretraining</div><h4>Next-token prediction</h4><p>A decoder-only transformer on trillions of tokens. It learns language, facts and reasoning patterns. Extremely expensive.</p></div>
+    <div class="card"><div class="kicker">2 · SFT</div><h4>Instruction tuning</h4><p>Fine-tune on (instruction, ideal response) pairs so it follows requests.</p></div>
+    <div class="card"><div class="kicker">3 · Preference tuning</div><h4>RLHF / DPO</h4><p>Learn from human (or AI) preference comparisons between answers. RLHF trains a reward model and then uses RL (PPO). DPO optimises directly on the preference pairs. This makes the model helpful and safe.</p></div>
+  </div>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>An LLM is autocomplete trained on a huge library and then coached to be a helpful assistant. It generates one token at a time, each time choosing from a probability distribution over the next token. This is why it can <b>hallucinate</b>: it produces plausible text, not looked-up facts, unless you give it the facts (RAG).</p></div>
+
+  <h2 id="sample">Decoding: temperature, top-k, top-p</h2>
+  <div class="widget">
+    <div class="widget-title">Next token after "Your loan application has been …"</div>
+    <div class="widget-sub">Temperature reshapes the distribution. Top-k and top-p cut off the unlikely tail (faded bars can't be sampled).</div>
+    <div class="controls">
+      <div class="control"><label>temperature <b id="Tv"></b></label><input type="range" id="T" min="0.1" max="2" step="0.05" value="1"></div>
+      <div class="control"><label>top-k <b id="Kv"></b></label><input type="range" id="K" min="1" max="8" value="8"></div>
+      <div class="control"><label>top-p (nucleus) <b id="Pv"></b></label><input type="range" id="P" min="0.1" max="1" step="0.05" value="1"></div>
+      <div class="control" style="align-self:end"><button class="btn primary" id="smp">🎲 Sample</button></div>
+    </div>
+    <div class="bars" id="bars"></div>
+    <div class="readout" id="sout"></div>
+  </div>
+  <p>Use low temperature (0–0.3) for extraction, classification and SQL generation, where you want repeatable answers. Use higher (0.7–1) for creative text. Temperature 0 is close to greedy decoding.</p>
+
+  <h2 id="choose">Prompting vs RAG vs fine-tuning</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Need</th><th>Use</th><th>Why</th></tr>
+    <tr><td>General task, quick prototype</td><td><b>Prompting</b> (zero/few-shot, structured output)</td><td>Cheapest, fastest iteration</td></tr>
+    <tr><td>Answers grounded in <b>your</b> documents, which change often (policies, product T&amp;Cs)</td><td><b>RAG</b></td><td>Fresh knowledge, citations, no retraining; reduces hallucination</td></tr>
+    <tr><td>Consistent <b>style / format / behaviour</b>, domain jargon, or a smaller cheaper model</td><td><b>Fine-tuning</b> (LoRA)</td><td>Teaches behaviour, not facts. Good for high volume and latency needs.</td></tr>
+    <tr><td>Both knowledge and behaviour</td><td>RAG + fine-tuned model</td><td>Common in mature systems</td></tr>
+  </table></div>
+  <div class="callout interview"><div class="tag">🎯 The one-liner</div><p>"<b>RAG for knowledge, fine-tuning for behaviour.</b> I'd start with prompting plus RAG, build an eval set, and fine-tune only if evals show a gap in format, tone or cost that prompting can't close."</p></div>
+
+  <h2 id="rag">RAG: retrieval-augmented generation</h2>
+  <div class="grid">
+    <div class="card"><div class="kicker">INDEX</div><h4>Chunk → embed → store</h4><p>Split documents into ~300–800-token chunks with overlap, embed them, and store in a vector DB with metadata.</p></div>
+    <div class="card"><div class="kicker">RETRIEVE</div><h4>Hybrid search</h4><p>Dense vectors + BM25 keywords, then re-rank the top candidates with a cross-encoder. Filter by metadata (product, date, region).</p></div>
+    <div class="card"><div class="kicker">GENERATE</div><h4>Grounded prompt</h4><p>"Answer only from the context; cite sources; say 'I don't know' if it isn't there."</p></div>
+  </div>
+  <div class="callout trap"><div class="tag">⚠️ Where RAG fails</div><p>Bad chunking (tables split in half), retrieval misses (embedding model unsuited to the domain), too much irrelevant context, stale indexes, and no evaluation. <b>Measure retrieval and generation separately</b>: retrieval with recall@k, generation with faithfulness and answer relevance.</p></div>
+
+  <h2 id="lora">Fine-tuning efficiently: LoRA &amp; QLoRA</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Updating all 7 billion weights is expensive. LoRA freezes the original model and learns a small "correction" for selected weight matrices as the product of two thin matrices. You train under 1% of the parameters, the adapter file is a few MB, and you can swap adapters per task.</p></div>
+  <div class="callout math"><div class="tag">📐 LoRA</div><div class="formula">W' = W + ΔW = W + B·A, &nbsp; B ∈ ℝ<sup>d×r</sup>, A ∈ ℝ<sup>r×k</sup>, &nbsp; r ≪ d</div><p>With d = k = 4096 and r = 8: the full matrix has 16.7M parameters, LoRA has 65k (0.4%). <b>QLoRA</b> also stores the frozen base model in 4-bit, so you can fine-tune a 7–13B model on one consumer GPU.</p></div>
+
+  <h2 id="eval">Evaluating LLM systems</h2>
+  <ul>
+    <li><b>Golden set</b>: 100–500 real questions with reference answers, labelled by domain experts. Run it in CI on every prompt or model change.</li>
+    <li><b>Task metrics</b> where possible: exact match, F1 for extraction, accuracy for classification.</li>
+    <li><b>LLM-as-judge</b> with a rubric for open-ended answers (faithfulness, relevance, tone). Calibrate the judge against human labels.</li>
+    <li><b>Ops metrics</b>: latency (p95), cost per request, refusal rate, PII leakage, prompt-injection robustness.</li>
+    <li><b>Online</b>: thumbs up/down, deflection rate (chatbot), handle-time reduction, CSAT.</li>
+  </ul>
+
+  <h2 id="code">Code</h2>
+  <script type="text/plain" class="snippet" data-title="minimal RAG pipeline">
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+
+    enc = SentenceTransformer("BAAI/bge-small-en-v1.5")
+
+    def chunk(text, size=500, overlap=100):
+        words = text.split()
+        return [" ".join(words[i:i + size]) for i in range(0, len(words), size - overlap)]
+
+    chunks = [c for doc in policy_docs for c in chunk(doc)]
+    E = enc.encode(chunks, normalize_embeddings=True)
+
+    def answer(question, llm, k=4):
+        q = enc.encode([question], normalize_embeddings=True)
+        top = np.argsort(-(E @ q.T).ravel())[:k]
+        context = "\n\n".join(f"[{i}] {chunks[i]}" for i in top)
+        prompt = f"""Answer using ONLY the context. Cite chunk ids like [3].
+    If the answer is not in the context, say "I don't know".
+
+    Context:
+    {context}
+
+    Question: {question}"""
+        return llm(prompt)          # any chat-completion API, temperature ~0
+  </script>
+  <script type="text/plain" class="snippet" data-title="LoRA fine-tuning with Hugging Face PEFT">
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+
+    base = "meta-llama/Llama-3.2-1B-Instruct"         # any open causal LM
+    bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4")   # QLoRA
+    model = AutoModelForCausalLM.from_pretrained(base, quantization_config=bnb, device_map="auto")
+    model = prepare_model_for_kbit_training(model)
+
+    cfg = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05,
+                     target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM")
+    model = get_peft_model(model, cfg)
+    model.print_trainable_parameters()     # ~0.1-1% trainable
+    # then train with transformers.Trainer or trl.SFTTrainer on (instruction, response) pairs
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>GAN vs VAE vs diffusion?</summary><div class="ans"><p>VAE: likelihood-based, stable, smooth latent space, blurrier samples. GAN: adversarial, sharp samples, unstable training and mode collapse. Diffusion: iterative denoising, best quality and diversity with stable training, but slower sampling (mitigated by fewer-step samplers and distillation).</p></div></details>
+  <details class="qa"><summary>What is hallucination and how do you reduce it?</summary><div class="ans"><p>Fluent but false or unsupported output. Reduce it by grounding with RAG and requiring citations, using low temperature, constraining output (JSON schema, enums), instructing the model to say "I don't know", verifying with a second pass or tools, and measuring faithfulness on an eval set.</p></div></details>
+  <details class="qa"><summary>Why does LoRA work?</summary><div class="ans"><p>Weight updates during fine-tuning tend to have low intrinsic rank. Most of the useful change lives in a small subspace, so ΔW ≈ BA with small r captures it. Benefits: far less memory (no optimizer state for frozen weights), small adapters, no added inference latency once merged.</p></div></details>
+  <details class="qa"><summary>RLHF vs DPO?</summary><div class="ans"><p>RLHF trains a reward model from preference pairs and then optimises the policy with PPO plus a KL penalty to the SFT model. It's powerful but complex and unstable. DPO gets the same objective in closed form as a classification-style loss directly on preference pairs, with no reward model and no RL loop. It's simpler and widely used.</p></div></details>
+  <details class="qa"><summary>A bank wants a chatbot over 2,000 policy PDFs. Outline it.</summary><div class="ans"><p>Ingest with layout-aware parsing (tables!), chunk with metadata (product, version, date), hybrid retrieval + re-ranker, an LLM with a grounded prompt and citations, guardrails (PII masking, refusal on advice outside scope, prompt-injection filtering), human handoff, a golden eval set with retrieval and faithfulness metrics, logging, and an index-refresh pipeline when policies change. Choose a model that meets data residency rules.</p></div></details>
+  <details class="qa"><summary>How do you reduce LLM cost and latency?</summary><div class="ans"><p>Use smaller models (route easy queries to small, hard to large), prompt caching, shorter prompts and contexts, batching, quantisation (INT8/4-bit) for self-hosted models, distillation into a fine-tuned small model, streaming responses, and caching frequent answers.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const toks=[["approved",3.2],["rejected",2.6],["received",2.4],["processed",2.0],["delayed",1.2],["escalated",0.6],["eaten",-1.5],["banana",-3]];
+  let picked=null;
+  function probs(){const T=+$('T').value,K=+$('K').value,P=+$('P').value;
+    const s=toks.map(([w,l])=>l/T);const m=Math.max(...s);let p=s.map(v=>Math.exp(v-m));const Z=p.reduce((a,b)=>a+b);p=p.map(v=>v/Z);
+    const idx=p.map((v,i)=>i).sort((a,b)=>p[b]-p[a]);const keep=new Set();let c=0;
+    for(let r=0;r<idx.length;r++){if(r>=K)break;keep.add(idx[r]);c+=p[idx[r]];if(c>=P)break;}
+    return {p,keep};}
+  function draw(){
+    $('Tv').textContent=(+$('T').value).toFixed(2);$('Kv').textContent=$('K').value;$('Pv').textContent=(+$('P').value).toFixed(2);
+    const {p,keep}=probs();
+    $('bars').innerHTML=toks.map(([w],i)=>`<div><span style="width:100px;${picked===i?'font-weight:700;color:var(--coral)':''}">${w}</span><span class="b ${keep.has(i)?'':'cut'}" style="width:${Math.max(2,p[i]*380)}px;${picked===i?'background:var(--coral)':''}"></span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">${(p[i]*100).toFixed(1)}%</span></div>`).join('');
+    $('sout').innerHTML=picked===null?'Press Sample.':`Sampled: <b>"${toks[picked][0]}"</b> ${picked>=6?'(that\'s what high temperature without top-p can do 🙃)':''}`;
+  }
+  $('smp').onclick=()=>{const {p,keep}=probs();const ks=[...keep];const Z=ks.reduce((a,i)=>a+p[i],0);let r=Math.random()*Z;for(const i of ks){r-=p[i];if(r<=0){picked=i;break;}}draw();};
+  ['T','K','P'].forEach(id=>$(id).addEventListener('input',()=>{picked=null;draw();}));draw();
+})();
+</script>
+</body>
+</html>

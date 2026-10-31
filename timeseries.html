@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>09 · Time-series forecasting · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="timeseries">
+<main>
+  <div class="eyebrow">Lesson 09 · Week 6 · Demand, cash flow, call volume</div>
+  <h1>Time-series forecasting with deep learning</h1>
+  <p class="lede">Forecasting ATM cash, product demand across 50,000 SKUs, call-centre load or a customer's next-month spend. Deep learning shines when you have <b>many related series</b> and rich covariates, and you train one <i>global</i> model across all of them.</p>
+  <div class="toc"><a href="#when">When DL helps</a><a href="#frame">Framing</a><a href="#models">Models</a><a href="#cv">Validation</a><a href="#metrics">Metrics</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="when">Classical vs deep learning</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Situation</th><th>Go with</th></tr>
+    <tr><td>One or a few series, short history, need explanation</td><td>ARIMA / ETS / Prophet, seasonal naive baseline</td></tr>
+    <tr><td>Thousands of related series (SKUs × stores, ATMs, branches)</td><td><b>Global</b> model: LightGBM on lag features, or DeepAR / TFT / N-HiTS</td></tr>
+    <tr><td>Rich known-future covariates (promos, holidays, price)</td><td>TFT, LightGBM, DeepAR</td></tr>
+    <tr><td>Need probabilistic forecasts (inventory, cash buffers)</td><td>DeepAR, TFT with quantile loss</td></tr>
+    <tr><td>No time to build, need decent zero-shot quality</td><td>Time-series foundation models (Chronos, TimesFM, Moirai)</td></tr>
+  </table></div>
+  <div class="callout interview"><div class="tag">🎯 Interview point</div><p>In the M5 forecasting competition (Walmart sales), gradient-boosted trees on lag and calendar features dominated the leaderboard. Say this to show judgement: <b>start with seasonal-naive and LightGBM baselines; reach for DL when you have scale, covariates or need distributions.</b></p></div>
+
+  <h2 id="frame">Framing: turn a series into supervised windows</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Slide a window along the history: "given the last 28 days (the <b>lookback</b>), predict the next 7 (the <b>horizon</b>)". Each slide is one training example. Add features you know in advance (day of week, holidays, planned promos) and static ones (store size, region).</p></div>
+  <ul>
+    <li><b>Recursive</b>: predict one step, feed it back, repeat. Errors compound.</li>
+    <li><b>Direct / multi-output</b>: predict all H steps at once. This is standard for DL models.</li>
+    <li><b>Scale per series</b> (divide by the series mean, or use log1p) so one global model can learn across big and small stores.</li>
+  </ul>
+
+  <h2 id="models">Models worth knowing</h2>
+  <div class="grid two">
+    <div class="card"><div class="kicker">RNN</div><h4>LSTM / GRU seq2seq</h4><p>Encoder reads the history, decoder emits the horizon. A solid baseline that is sensitive to scaling.</p></div>
+    <div class="card"><div class="kicker">CNN</div><h4>TCN</h4><p>Causal dilated 1D convolutions give an exponentially growing receptive field. Parallel and fast.</p></div>
+    <div class="card"><div class="kicker">Amazon</div><h4>DeepAR</h4><p>A global autoregressive RNN that outputs a <b>distribution</b> (e.g. negative binomial for counts), not a point. Good for intermittent retail demand.</p></div>
+    <div class="card"><div class="kicker">MLP</div><h4>N-BEATS / N-HiTS</h4><p>Stacks of MLP blocks that each forecast and subtract their fit from the input (backcast). Simple, fast and strong. N-BEATS can decompose into trend and seasonality.</p></div>
+    <div class="card"><div class="kicker">Google</div><h4>Temporal Fusion Transformer</h4><p>Variable-selection networks + LSTM + attention + quantile outputs. Handles static, known-future and observed covariates, with interpretable feature weights. Popular in industry.</p></div>
+    <div class="card"><div class="kicker">Transformer</div><h4>PatchTST</h4><p>Chops a series into patches (like ViT) and models each channel independently. Strong on long horizons.</p></div>
+    <div class="card"><div class="kicker">Foundation</div><h4>Chronos / TimesFM / Moirai</h4><p>Pre-trained on huge collections of series and forecast <b>zero-shot</b>. A great quick baseline; fine-tune if needed.</p></div>
+  </div>
+
+  <h2 id="cv">Validation: never shuffle time</h2>
+  <div class="widget">
+    <div class="widget-title">Walk-forward (expanding window) validation</div>
+    <div class="widget-sub">Each fold trains on the past and tests on the next block, exactly like production. Switch to "random K-fold" to see the leakage: the model trains on the future.</div>
+    <div class="controls">
+      <div class="control"><label>folds <b id="kv"></b></label><input type="range" id="k" min="2" max="6" value="4"></div>
+      <div class="control"><label>gap between train &amp; test (days) <b id="gv"></b></label><input type="range" id="g" min="0" max="3" value="1"></div>
+      <div class="control"><label>scheme</label><select id="sch"><option value="wf">walk-forward ✅</option><option value="rnd">random K-fold ❌</option></select></div>
+    </div>
+    <canvas id="cvc"></canvas>
+    <div class="readout" id="cvout"></div>
+  </div>
+  <div class="callout trap"><div class="tag">⚠️ Leakage traps</div><p>Rolling features computed with a centred window. Scaling with statistics from the full series. Using a covariate you won't know at prediction time (actual weather, actual promo uptake). Target-encoding with future data. Add a <b>gap</b> between train and test if your features need lag time to arrive.</p></div>
+
+  <h2 id="metrics">Metrics</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Metric</th><th>Notes</th></tr>
+    <tr><td>MAE / RMSE</td><td>Scale-dependent. RMSE punishes big misses.</td></tr>
+    <tr><td>MAPE</td><td>Explodes when actuals are near 0 and penalises over-forecasting more. Avoid for intermittent demand.</td></tr>
+    <tr><td><b>WAPE</b> = Σ|e| / Σ|y|</td><td>The retail favourite: robust and business-readable.</td></tr>
+    <tr><td>MASE</td><td>Error relative to a seasonal-naive forecast. Below 1 means you beat naive.</td></tr>
+    <tr><td><b>Pinball / quantile loss</b></td><td>For P10/P50/P90 forecasts, e.g. safety stock at P90.</td></tr>
+  </table></div>
+  <div class="callout math"><div class="tag">📐 Quantile (pinball) loss</div><div class="formula">L<sub>q</sub>(y, ŷ) = max( q(y − ŷ), (q − 1)(y − ŷ) )</div><p>At q = 0.9, under-forecasting costs 9× more than over-forecasting, so the model learns to predict high: the 90th percentile. That's exactly what you want for "how much cash to load into this ATM".</p></div>
+
+  <h2 id="code">Code</h2>
+  <script type="text/plain" class="snippet" data-title="windowing + LSTM direct multi-step forecaster">
+    import numpy as np, torch, torch.nn as nn
+
+    def make_windows(series, lookback=28, horizon=7):
+        X, Y = [], []
+        for t in range(lookback, len(series) - horizon + 1):
+            X.append(series[t - lookback:t]); Y.append(series[t:t + horizon])
+        return np.array(X)[..., None], np.array(Y)          # (N, L, 1), (N, H)
+
+    class LSTMForecaster(nn.Module):
+        def __init__(self, n_in=1, hidden=64, horizon=7):
+            super().__init__()
+            self.lstm = nn.LSTM(n_in, hidden, num_layers=2, batch_first=True, dropout=0.1)
+            self.head = nn.Linear(hidden, horizon)              # direct: all H steps at once
+        def forward(self, x):
+            out, _ = self.lstm(x)
+            return self.head(out[:, -1])
+
+    # scale using TRAIN statistics only
+    mu, sd = train_series.mean(), train_series.std()
+    X, Y = make_windows((train_series - mu) / sd)
+  </script>
+  <script type="text/plain" class="snippet" data-title="quantile loss + zero-shot foundation-model baseline">
+    def pinball_loss(pred, y, quantiles=(0.1, 0.5, 0.9)):
+        # pred: (B, H, Q), y: (B, H)
+        losses = []
+        for i, q in enumerate(quantiles):
+            e = y - pred[..., i]
+            losses.append(torch.max(q * e, (q - 1) * e))
+        return torch.mean(torch.stack(losses))
+
+    # Zero-shot baseline with a pretrained time-series model (pip install chronos-forecasting)
+    from chronos import ChronosPipeline
+    pipe = ChronosPipeline.from_pretrained("amazon/chronos-t5-small")
+    samples = pipe.predict(torch.tensor(history), prediction_length=14)   # (1, n_samples, 14)
+    p10, p50, p90 = np.quantile(samples[0].numpy(), [0.1, 0.5, 0.9], axis=0)
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Why can't you use regular K-fold CV for time series?</summary><div class="ans"><p>It trains on future data to predict the past, which leaks information (trends, regime changes) and gives optimistic scores. Use walk-forward / expanding or sliding-window splits that respect time order, with a gap if needed.</p></div></details>
+  <details class="qa"><summary>Local vs global models?</summary><div class="ans"><p>Local means one model per series (ARIMA per SKU): no sharing, bad for short or new series. Global means one model across all series. It learns shared patterns, handles cold-start series via static features and scales to millions of series. DL forecasters and LightGBM are typically global.</p></div></details>
+  <details class="qa"><summary>How would you forecast demand for a brand-new product?</summary><div class="ans"><p>There's no history, so use a global model with static and content features (category, price, brand, image/text embeddings), plus analogous products' launch curves. Start with category-level priors and update quickly as sales arrive.</p></div></details>
+  <details class="qa"><summary>What is TFT and why is it popular?</summary><div class="ans"><p>The Temporal Fusion Transformer combines gated variable-selection networks (which features matter), LSTM local processing, multi-head attention for long-range patterns, and quantile outputs. It natively handles static, known-future and past-observed covariates, and it's interpretable through variable weights and attention.</p></div></details>
+  <details class="qa"><summary>Why might MAPE be a bad choice?</summary><div class="ans"><p>It's undefined or explosive for zero or near-zero actuals and asymmetric (over-forecasts are penalised more than under-forecasts). Prefer WAPE, MASE or a cost-based metric tied to stockouts vs holding cost.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  function draw(){
+    const K=+$('k').value,G=+$('g').value,s=$('sch').value;$('kv').textContent=K;$('gv').textContent=G;
+    const {ctx,w,h,col}=DLP_canvas($('cvc'),40+K*34);ctx.clearRect(0,0,w,h);
+    const N=36,cw=(w-80)/N;ctx.font='12px ui-monospace';
+    for(let f=0;f<K;f++){const y=10+f*34;ctx.fillStyle=col('--muted');ctx.fillText('fold '+(f+1),2,y+17);
+      for(let t=0;t<N;t++){let c=col('--line');
+        if(s==='wf'){const testStart=Math.floor(N*(0.45+0.55*f/K)),testEnd=Math.floor(N*(0.45+0.55*(f+1)/K));
+          if(t<testStart-G)c=col('--accent');else if(t>=testStart&&t<testEnd)c='#e2554f';else if(t>=testStart-G&&t<testStart)c=col('--bg');}
+        else{const blk=Math.floor(t/(N/K));c=blk===f?'#e2554f':col('--accent');}
+        ctx.fillStyle=c;ctx.fillRect(60+t*cw,y,cw-2,24);}}
+    $('cvout').innerHTML=s==='wf'?'<span style="color:var(--accent)">■ train</span> &nbsp; <span style="color:#e2554f">■ test</span> &nbsp; Training always ends before testing starts, with the gap in between. Average the fold scores.':'<b style="color:var(--coral)">Leakage:</b> in folds 1–'+(K-1)+' the model trains on data <i>after</i> the test period. Scores will look great and then fail in production.';
+  }
+  ['k','g','sch'].forEach(id=>$(id).addEventListener('input',draw));draw();
+  window.addEventListener('resize',draw);window.addEventListener('dlp-theme',draw);
+})();
+</script>
+</body>
+</html>

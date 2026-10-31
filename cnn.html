@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>04 · CNNs & computer vision · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+<style>
+.grids{display:flex;gap:22px;flex-wrap:wrap;align-items:center;justify-content:center;margin-top:10px}
+.pix{display:grid;gap:2px}
+.pix div{width:22px;height:22px;border-radius:4px;font:10px var(--mono);display:grid;place-items:center}
+.kern{display:grid;grid-template-columns:repeat(3,38px);gap:3px}
+.kern div{height:38px;display:grid;place-items:center;border-radius:6px;background:var(--accent-soft);color:var(--accent);font:600 13px var(--mono)}
+.glabel{font-size:12px;color:var(--muted);text-align:center;margin-top:6px}
+</style>
+</head>
+<body data-page="cnn">
+<main>
+  <div class="eyebrow">Lesson 04 · Week 3 · Vision</div>
+  <h1>CNNs &amp; computer vision</h1>
+  <p class="lede">A convolutional network slides small learnable filters over an image. Each filter learns to detect one pattern (an edge, a texture, eventually a face) wherever it appears in the image.</p>
+  <div class="toc"><a href="#why">Why convolution</a><a href="#conv">Convolution live</a><a href="#size">Output size</a><a href="#pool">Pooling</a><a href="#arch">Architectures</a><a href="#tl">Transfer learning</a><a href="#tasks">Detection &amp; segmentation</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="why">Why not just use an MLP on pixels?</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>A 224×224 colour image has 150,528 numbers. A dense layer of 1,000 neurons would need 150 <b>million</b> weights, and it would have to learn "cat in the top-left" separately from "cat in the bottom-right". A CNN uses one small 3×3 filter, shares it across the whole image, and only looks at neighbouring pixels. That gives far fewer parameters and finds the pattern wherever it is.</p></div>
+  <div class="grid">
+    <div class="card"><h4>Local connectivity</h4><p>Each neuron looks at a small patch, because nearby pixels are related.</p></div>
+    <div class="card"><h4>Weight sharing</h4><p>The same filter is used everywhere, which cuts the parameter count enormously.</p></div>
+    <div class="card"><h4>Translation equivariance</h4><p>Shift the input and the feature map shifts with it. Pooling adds some translation <i>invariance</i>.</p></div>
+    <div class="card"><h4>Hierarchy</h4><p>Edges → textures → parts → objects as the receptive field grows with depth.</p></div>
+  </div>
+
+  <h2 id="conv">Convolution, live</h2>
+  <div class="widget">
+    <div class="widget-title">Apply a filter to a tiny image</div>
+    <div class="widget-sub">The input is a 10×10 "digit". Pick a kernel and see which pixels light up in the feature map. A CNN <b>learns</b> these kernel numbers by backprop instead of us hand-writing them.</div>
+    <div class="seg" id="kseg"></div>
+    <div class="grids"><div><div class="pix" id="inp"></div><div class="glabel">input (10×10)</div></div><div style="font-size:26px">∗</div><div><div class="kern" id="ker"></div><div class="glabel">kernel (3×3)</div></div><div style="font-size:26px">=</div><div><div class="pix" id="out"></div><div class="glabel">feature map (8×8, no padding)</div></div></div>
+    <div class="readout" id="kout"></div>
+  </div>
+
+  <h2 id="size">The output-size formula (asked constantly)</h2>
+  <div class="callout math"><div class="tag">📐 Memorise this</div>
+    <div class="formula">out = ⌊ (W − K + 2P) / S ⌋ + 1</div>
+    <p>W = input size, K = kernel size, P = padding, S = stride. <b>Parameters</b> in a conv layer = (K × K × C<sub>in</sub> + 1) × C<sub>out</sub>. They do not depend on the image size.</p>
+  </div>
+  <div class="widget">
+    <div class="widget-title">Conv layer calculator</div>
+    <div class="controls">
+      <div class="control"><label>input W <b id="cWv"></b></label><input type="range" id="cW" min="7" max="256" value="224"></div>
+      <div class="control"><label>kernel K <b id="cKv"></b></label><input type="range" id="cK" min="1" max="11" step="2" value="3"></div>
+      <div class="control"><label>padding P <b id="cPv"></b></label><input type="range" id="cP" min="0" max="5" value="1"></div>
+      <div class="control"><label>stride S <b id="cSv"></b></label><input type="range" id="cS" min="1" max="4" value="1"></div>
+      <div class="control"><label>C_in <b id="cIv"></b></label><input type="range" id="cI" min="1" max="512" value="3"></div>
+      <div class="control"><label>C_out <b id="cOv"></b></label><input type="range" id="cO" min="1" max="512" value="64"></div>
+    </div>
+    <div class="readout" id="cout"></div>
+  </div>
+
+  <h2 id="pool">Pooling, 1×1 convs and receptive field</h2>
+  <ul>
+    <li><b>Max pooling</b> (2×2, stride 2) halves the spatial size and keeps the strongest activation, which gives a little robustness to small shifts. Modern nets often use stride-2 convs instead.</li>
+    <li><b>Global average pooling</b> averages each feature map to a single number before the classifier. It replaced huge dense layers (fewer parameters, less overfitting).</li>
+    <li><b>1×1 convolution</b> mixes channels at each pixel. It's used to shrink or expand the channel count cheaply (the bottlenecks in ResNet and Inception).</li>
+    <li><b>Receptive field</b>: the input region a neuron "sees". It grows with depth, stride and dilation. Two stacked 3×3 convs see 5×5 with fewer parameters than one 5×5 (that's VGG's insight).</li>
+  </ul>
+
+  <h2 id="arch">Architectures: the story in six steps</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Model</th><th>Year</th><th>Key idea to remember</th></tr>
+    <tr><td>LeNet-5</td><td>1998</td><td>Conv → pool → dense. Read cheque digits for banks.</td></tr>
+    <tr><td>AlexNet</td><td>2012</td><td>ReLU, dropout and GPUs. Started the deep learning boom on ImageNet.</td></tr>
+    <tr><td>VGG</td><td>2014</td><td>Only stacked 3×3 convs. Deep and simple.</td></tr>
+    <tr><td><b>ResNet</b></td><td>2015</td><td><b>Skip connections</b>: y = F(x) + x. Made 100+ layer nets trainable.</td></tr>
+    <tr><td>EfficientNet / MobileNet</td><td>2017–19</td><td>Depthwise-separable convs and compound scaling. Fast on mobile.</td></tr>
+    <tr><td>ViT / ConvNeXt</td><td>2020–22</td><td>ViT: image patches as tokens in a transformer, needs lots of data. ConvNeXt: a CNN modernised with transformer design tricks.</td></tr>
+  </table></div>
+  <div class="callout layman"><div class="tag">🧒 Why ResNet's skip connection works</div><p>Instead of asking each block to learn the whole transformation, the block only learns the <i>correction</i> F(x) to add to its input. If a layer isn't useful it can learn F(x)=0 and pass x through unchanged. The "+x" path also gives gradients a highway straight back to the early layers, so they don't vanish.</p></div>
+
+  <h2 id="tl">Transfer learning: the thing you'll actually do at work</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>A model pre-trained on millions of images has already learned edges, textures and shapes. You keep that "visual cortex" and retrain only the last layer for your task, such as "is this a valid Aadhaar/PAN card?". It works with a few thousand labelled images instead of millions.</p></div>
+  <div class="table-wrap"><table>
+    <tr><th>Your data</th><th>Similar to ImageNet?</th><th>Strategy</th></tr>
+    <tr><td>Small</td><td>Yes</td><td>Freeze the backbone and train only the head (feature extraction)</td></tr>
+    <tr><td>Small</td><td>No (X-rays, documents)</td><td>Freeze early layers, fine-tune later layers, augment heavily</td></tr>
+    <tr><td>Large</td><td>Yes</td><td>Fine-tune everything with a small LR</td></tr>
+    <tr><td>Large</td><td>No</td><td>Fine-tune everything, or pretrain on your own domain</td></tr>
+  </table></div>
+  <div class="callout trap"><div class="tag">⚠️ Fine-tuning traps</div><p>Use a <b>lower LR for the backbone</b> (e.g. 1e-5) than for the new head (1e-3), or you'll wreck the pretrained features ("catastrophic forgetting"). Use the <b>same normalisation</b> (ImageNet mean/std) the model was pretrained with.</p></div>
+
+  <h2 id="tasks">Beyond classification</h2>
+  <div class="grid">
+    <div class="card"><div class="kicker">classification</div><h4>What is it?</h4><p>ResNet, EfficientNet, ViT. Product category, document type.</p></div>
+    <div class="card"><div class="kicker">detection</div><h4>What and where?</h4><p>YOLO (one-stage, real-time) vs Faster R-CNN (two-stage, accurate). Metric: mAP at an IoU threshold.</p></div>
+    <div class="card"><div class="kicker">segmentation</div><h4>Which pixels?</h4><p>U-Net (encoder-decoder with skip connections), Mask R-CNN. Medical scans, car-damage area for insurance.</p></div>
+    <div class="card"><div class="kicker">OCR / documents</div><h4>Read it</h4><p>Detection + CRNN/transformer recognisers; LayoutLM or Donut for forms, invoices and KYC.</p></div>
+    <div class="card"><div class="kicker">similarity</div><h4>Find similar</h4><p>Siamese nets / CLIP embeddings for visual search ("shop the look") and face match in e-KYC.</p></div>
+  </div>
+
+  <h2 id="code">Code: fine-tune a pretrained ResNet</h2>
+  <script type="text/plain" class="snippet" data-title="pytorch / torchvision — transfer learning">
+    import torch, torch.nn as nn
+    from torchvision import models, transforms, datasets
+
+    tfm_train = transforms.Compose([
+        transforms.RandomResizedCrop(224), transforms.RandomHorizontalFlip(),
+        transforms.ColorJitter(0.2, 0.2, 0.2), transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # ImageNet stats
+    ])
+    train_ds = datasets.ImageFolder("data/train", tfm_train)   # folder per class
+
+    model = models.resnet50(weights="IMAGENET1K_V2")
+    for p in model.parameters():            # 1) freeze the backbone
+        p.requires_grad = False
+    model.fc = nn.Linear(model.fc.in_features, len(train_ds.classes))  # 2) new head
+
+    # 3) later: unfreeze the last block with a smaller LR (discriminative learning rates)
+    for p in model.layer4.parameters():
+        p.requires_grad = True
+    opt = torch.optim.AdamW([
+        {"params": model.layer4.parameters(), "lr": 1e-5},
+        {"params": model.fc.parameters(),     "lr": 1e-3},
+    ], weight_decay=1e-2)
+  </script>
+  <script type="text/plain" class="snippet" data-title="a small CNN from scratch (know the shapes)">
+    class SmallCNN(nn.Module):
+        def __init__(self, n_classes=10):
+            super().__init__()
+            self.features = nn.Sequential(
+                nn.Conv2d(1, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(),   # 28x28x32
+                nn.MaxPool2d(2),                                                 # 14x14x32
+                nn.Conv2d(32, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(),  # 14x14x64
+                nn.MaxPool2d(2),                                                 # 7x7x64
+            )
+            self.head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(64, n_classes))
+        def forward(self, x):
+            return self.head(self.features(x))
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Input is 32×32×3, conv with 16 filters of 5×5, stride 1, no padding. Output shape and parameter count?</summary><div class="ans"><p>(32−5+0)/1+1 = 28, so the output is 28×28×16. Parameters = (5·5·3 + 1)·16 = 1,216.</p></div></details>
+  <details class="qa"><summary>Why do residual connections help?</summary><div class="ans"><p>(1) Gradient highway: ∂(F(x)+x)/∂x = F'(x) + 1, so the gradient never fully vanishes. (2) Easy identity: a block can learn F=0 and be skipped, so adding depth can't make things worse in principle. This solved the degradation problem where deeper plain nets trained worse.</p></div></details>
+  <details class="qa"><summary>CNN vs Vision Transformer?</summary><div class="ans"><p>CNNs have built-in inductive biases (locality, translation equivariance), so they're data-efficient and good for small or medium datasets and edge devices. ViTs have weaker biases and global attention from layer 1. They need large data or pretraining but scale better. In practice, use whichever pretrained backbone does best on your validation set.</p></div></details>
+  <details class="qa"><summary>What does a 1×1 convolution do?</summary><div class="ans"><p>It's a per-pixel linear layer across channels. It changes the channel count (bottleneck to save compute), adds non-linearity, and mixes channel information without touching spatial size.</p></div></details>
+  <details class="qa"><summary>You have 2,000 labelled images of damaged vs undamaged cars. Approach?</summary><div class="ans"><p>Transfer learning from an ImageNet backbone (EfficientNet/ResNet/ConvNeXt), heavy augmentation, freeze then gradually unfreeze with discriminative LRs, stratified CV, and track recall on "damaged". Add Grad-CAM to verify the model looks at the dent, not the background. If more is needed, use semi-supervised learning or self-supervised pretraining on unlabelled claim photos.</p></div></details>
+  <details class="qa"><summary>Max pooling vs average pooling?</summary><div class="ans"><p>Max keeps the strongest activation ("is the feature present anywhere here?") and is used between conv blocks. Average smooths and summarises. Global average pooling is standard just before the classifier.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const img=[
+  "0000000000","0011111100","0110000110","0000000110","0000001100","0000011000","0000110000","0001100000","0011111110","0000000000"].map(r=>[...r].map(Number));
+  const K={
+    'Vertical edge':[[1,0,-1],[1,0,-1],[1,0,-1]],
+    'Horizontal edge':[[1,1,1],[0,0,0],[-1,-1,-1]],
+    'Blur':[[1,1,1],[1,1,1],[1,1,1]].map(r=>r.map(v=>+(v/9).toFixed(2))),
+    'Sharpen':[[0,-1,0],[-1,5,-1],[0,-1,0]],
+    'Diagonal':[[2,-1,-1],[-1,2,-1],[-1,-1,2]],
+  };
+  const notes={'Vertical edge':'Lights up where brightness changes left↔right: the vertical strokes of the "2".','Horizontal edge':'Responds to top/bottom boundaries: the horizontal bars.','Blur':'Averages neighbours, i.e. smoothing. This is roughly what average pooling does.','Sharpen':'Boosts the centre against its neighbours, so details pop.','Diagonal':'Detects the diagonal stroke in the middle of the digit.'};
+  let cur='Vertical edge';
+  Object.keys(K).forEach(k=>{const b=document.createElement('button');b.textContent=k;b.onclick=()=>{cur=k;draw();};$('kseg').appendChild(b);});
+  function cell(v,max,acc){const d=document.createElement('div');const a=Math.min(1,Math.abs(v)/max);d.style.background=v>=0?`rgba(${acc},${a})`:`rgba(226,85,79,${a})`;d.style.color=a>.55?'#fff':'var(--muted)';return d;}
+  function draw(){
+    [...$('kseg').children].forEach(b=>b.classList.toggle('on',b.textContent===cur));
+    const inp=$('inp');inp.style.gridTemplateColumns='repeat(10,22px)';inp.innerHTML='';img.flat().forEach(v=>inp.appendChild(cell(v,1,'67,56,202')));
+    const k=K[cur];$('ker').innerHTML=k.flat().map(v=>`<div>${v}</div>`).join('');
+    const out=[];for(let i=0;i<8;i++)for(let j=0;j<8;j++){let s=0;for(let a=0;a<3;a++)for(let b=0;b<3;b++)s+=img[i+a][j+b]*k[a][b];out.push(s);}
+    const mx=Math.max(...out.map(Math.abs))||1;const o=$('out');o.style.gridTemplateColumns='repeat(8,22px)';o.innerHTML='';
+    out.forEach(v=>{const c=cell(v,mx,'15,118,110');c.textContent=Math.abs(v)>=mx*.5?Math.round(v*10)/10:'';o.appendChild(c);});
+    $('kout').innerHTML=notes[cur]+' <span style="color:var(--muted)">(teal = positive, red = negative response)</span>';
+  }
+  function calc(){
+    const g=id=>+$(id).value;['cW','cK','cP','cS','cI','cO'].forEach(id=>$(id+'v').textContent=g(id));
+    const W=g('cW'),Kk=g('cK'),P=g('cP'),S=g('cS'),I=g('cI'),O=g('cO');
+    const out=Math.floor((W-Kk+2*P)/S)+1;const params=(Kk*Kk*I+1)*O;
+    $('cout').innerHTML=out>0?`output = ⌊(${W} − ${Kk} + 2·${P}) / ${S}⌋ + 1 = <b>${out}×${out}×${O}</b> &nbsp;|&nbsp; params = (${Kk}·${Kk}·${I} + 1)·${O} = <b>${params.toLocaleString()}</b> &nbsp;|&nbsp; a dense layer doing the same would need ${(W*W*I*out*out*O).toExponential(1)} weights`:'Invalid: the kernel is larger than the padded input.';
+  }
+  ['cW','cK','cP','cS','cI','cO'].forEach(id=>$(id).addEventListener('input',calc));
+  draw();calc();
+})();
+</script>
+</body>
+</html>

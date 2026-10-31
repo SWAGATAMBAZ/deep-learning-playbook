@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>01 · Neural net foundations · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="foundations">
+<main>
+  <div class="eyebrow">Lesson 01 · Week 1</div>
+  <h1>Neural network foundations</h1>
+  <p class="lede">A neural network is a stack of very simple functions. Each one is a weighted sum followed by a bend. Training means nudging the weights so the output's error goes down. Everything else in deep learning builds on that.</p>
+  <div class="toc"><a href="#ml-vs-dl">ML vs DL</a><a href="#neuron">The neuron</a><a href="#activations">Activations</a><a href="#loss">Loss functions</a><a href="#gd">Gradient descent</a><a href="#backprop">Backprop</a><a href="#code">Code</a><a href="#qa">Interview Q&amp;A</a></div>
+
+  <h2 id="ml-vs-dl">Machine learning vs deep learning</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div>
+    <p>Classic ML (logistic regression, XGBoost) needs <b>you</b> to hand-craft the features: "average spend over the last 7 days", "number of words in the complaint". Deep learning <b>learns the features itself</b> from raw-ish data such as pixels, words or click sequences, one layer at a time. Early layers learn simple patterns (edges, character n-grams) and later layers combine them into concepts (faces, "angry customer").</p>
+  </div>
+  <div class="table-wrap"><table>
+    <tr><th></th><th>Classic ML (GBDT, LR)</th><th>Deep learning</th></tr>
+    <tr><td>Best data</td><td>Tabular, &lt;1M rows, engineered features</td><td>Images, text, audio, sequences, graphs, huge data</td></tr>
+    <tr><td>Feature engineering</td><td>Manual, critical</td><td>Learned (representation learning)</td></tr>
+    <tr><td>Data needed</td><td>Thousands</td><td>Lots, unless you use transfer learning</td></tr>
+    <tr><td>Compute</td><td>CPU, minutes</td><td>GPU, hours to days</td></tr>
+    <tr><td>Interpretability</td><td>Easier (SHAP, coefficients)</td><td>Harder</td></tr>
+  </table></div>
+  <div class="callout interview"><div class="tag">🎯 Interview point</div><p>"When would you <i>not</i> use deep learning?" Say: small tabular data, a need for strict interpretability (credit decisions under regulation), tight latency on CPU, or no unstructured signal. A tuned GBDT is the default baseline for tabular data.</p></div>
+
+  <h2 id="neuron">The neuron: weighted sum + bend</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div>
+    <p>A neuron is a tiny voter. It looks at its inputs, gives each one an importance (<b>weight</b>), adds a personal bias, and then decides how strongly to "fire" (the <b>activation</b>). One neuron with a sigmoid <i>is</i> logistic regression. A network is thousands of these voters in layers, where each layer votes on the previous layer's votes.</p>
+  </div>
+  <div class="callout math"><div class="tag">📐 The maths</div>
+    <div class="formula">z = w<sub>1</sub>x<sub>1</sub> + w<sub>2</sub>x<sub>2</sub> + … + b = <b>w·x + b</b> &nbsp;&nbsp;→&nbsp;&nbsp; a = σ(z)</div>
+    <p>A whole layer is a matrix multiply: <b>a = σ(Wx + b)</b>. Stacking layers gives <b>ŷ = σ₃(W₃ σ₂(W₂ σ₁(W₁x)))</b>. Without the non-linear σ, the whole stack collapses into one big linear model, which is why activations are essential.</p>
+  </div>
+
+  <div class="widget" id="neuronWidget">
+    <div class="widget-title">Neuron playground</div>
+    <div class="widget-sub">This neuron decides whether a card transaction looks risky from two inputs. Move the weights and watch the decision boundary rotate and shift. Each dot is a past transaction (red = fraud).</div>
+    <div class="controls">
+      <div class="control"><label>w₁ (amount) <b id="w1v"></b></label><input type="range" id="w1" min="-4" max="4" step="0.1" value="2"></div>
+      <div class="control"><label>w₂ (night-time) <b id="w2v"></b></label><input type="range" id="w2" min="-4" max="4" step="0.1" value="1.5"></div>
+      <div class="control"><label>bias b <b id="bv"></b></label><input type="range" id="b" min="-4" max="4" step="0.1" value="-1.5"></div>
+      <div class="control"><label>activation</label><select id="act"><option>sigmoid</option><option>tanh</option><option>relu</option></select></div>
+    </div>
+    <canvas id="nc"></canvas>
+    <div class="readout" id="nout"></div>
+  </div>
+
+  <h2 id="activations">Activation functions</h2>
+  <div class="widget">
+    <div class="widget-title">Activation explorer</div>
+    <div class="widget-sub">The solid line is the function and the dashed line is its gradient. A flat gradient means learning stalls. That is the vanishing-gradient problem.</div>
+    <div class="seg" id="actSeg"></div>
+    <canvas id="ac" style="margin-top:12px"></canvas>
+    <div class="readout" id="aout"></div>
+  </div>
+  <div class="table-wrap"><table>
+    <tr><th>Activation</th><th>Formula</th><th>Use it for</th><th>Watch out for</th></tr>
+    <tr><td><b>Sigmoid</b></td><td>1/(1+e<sup>−z</sup>)</td><td>Output layer for binary classification (fraud yes/no)</td><td>Saturates, so gradients vanish; max gradient is only 0.25</td></tr>
+    <tr><td><b>Tanh</b></td><td>(e<sup>z</sup>−e<sup>−z</sup>)/(e<sup>z</sup>+e<sup>−z</sup>)</td><td>Inside RNN/LSTM cells; zero-centred</td><td>Still saturates</td></tr>
+    <tr><td><b>ReLU</b></td><td>max(0, z)</td><td>Default for hidden layers in MLPs and CNNs</td><td>"Dead ReLU": neurons stuck at 0 forever</td></tr>
+    <tr><td><b>Leaky ReLU</b></td><td>max(0.01z, z)</td><td>Fixes dead ReLUs</td><td>Adds one hyperparameter</td></tr>
+    <tr><td><b>GELU / SiLU</b></td><td>z·Φ(z) / z·σ(z)</td><td>Transformers (BERT, GPT), modern CNNs</td><td>Slightly more compute</td></tr>
+    <tr><td><b>Softmax</b></td><td>e<sup>zᵢ</sup>/Σe<sup>zⱼ</sup></td><td>Output layer for multi-class problems, attention weights</td><td>Subtract max(z) first for numerical stability</td></tr>
+  </table></div>
+
+  <h2 id="loss">Loss functions: how wrong are we?</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>The loss is a single number that scores how bad the predictions are. Training is just "make this number smaller". Which loss you pick depends on what kind of wrong you care about.</p></div>
+  <div class="table-wrap"><table>
+    <tr><th>Task</th><th>Output layer</th><th>Loss</th><th>PyTorch</th></tr>
+    <tr><td>Regression (loan amount, demand)</td><td>Linear</td><td>MSE, or MAE/Huber if outliers</td><td><code>nn.MSELoss</code>, <code>nn.HuberLoss</code></td></tr>
+    <tr><td>Binary (fraud, churn, default)</td><td>1 logit</td><td>Binary cross-entropy</td><td><code>nn.BCEWithLogitsLoss</code></td></tr>
+    <tr><td>Multi-class (intent, category)</td><td>K logits</td><td>Cross-entropy</td><td><code>nn.CrossEntropyLoss</code></td></tr>
+    <tr><td>Heavy imbalance</td><td>Logits</td><td>Weighted CE / Focal loss</td><td><code>pos_weight=</code></td></tr>
+    <tr><td>Ranking / embeddings</td><td>Vectors</td><td>Contrastive, triplet, BPR, InfoNCE</td><td>custom</td></tr>
+  </table></div>
+  <div class="callout math"><div class="tag">📐 Binary cross-entropy</div>
+    <div class="formula">L = −[ y·log(p) + (1−y)·log(1−p) ]</div>
+    <p>If the truth is fraud (y=1) and you predict p=0.01, the loss is −log(0.01) ≈ 4.6, a big penalty. Predict p=0.99 and the loss is ≈ 0.01. Cross-entropy punishes <b>confident wrong answers</b> hard. That is why it beats MSE for classification: MSE with a sigmoid gives tiny gradients exactly when the model is very wrong.</p>
+  </div>
+  <div class="callout trap"><div class="tag">⚠️ Classic bug</div><p><code>nn.CrossEntropyLoss</code> and <code>BCEWithLogitsLoss</code> expect <b>raw logits</b>. They apply softmax/sigmoid internally. Adding a softmax layer before them silently hurts training.</p></div>
+
+  <h2 id="gd">Gradient descent: walking downhill blindfolded</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>You're on a foggy mountain and want to reach the valley (lowest loss). You can't see far, but you can feel the slope under your feet. So you take a step downhill, feel again, and step again. The <b>gradient</b> is the slope. The <b>learning rate</b> is your step size. Steps too big and you overshoot the valley; too small and you'll be there all year.</p></div>
+  <div class="callout math"><div class="tag">📐 Update rule</div><div class="formula">w ← w − η · ∂L/∂w</div>
+    <p><b>Batch GD</b> uses all data per step (accurate but slow). <b>Stochastic GD</b> uses 1 sample (noisy). <b>Mini-batch</b> uses 32–1024 samples, which is the standard. The noise from mini-batches actually helps the model escape sharp minima and generalise better.</p></div>
+  <p>See it live on the <a href="training.html#gdviz">training page's gradient-descent visualiser</a>.</p>
+
+  <h2 id="backprop">Backpropagation = the chain rule, applied backwards</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>The output was wrong by some amount. Backprop walks backwards through the network asking each weight, "how much of this error is your fault?" Each layer passes the blame to the layer before it, scaled by how much it amplified the signal. Every weight then moves a little in the direction that reduces its share of the blame.</p></div>
+  <div class="callout math"><div class="tag">📐 Chain rule for a 2-layer net</div>
+    <div class="formula">∂L/∂W₁ = ∂L/∂ŷ · ∂ŷ/∂h · ∂h/∂z₁ · ∂z₁/∂W₁</div>
+    <p>It's a product of local derivatives. If each factor is &lt; 1 (sigmoid's max is 0.25), the product shrinks exponentially with depth and you get <b>vanishing gradients</b>. If each is &gt; 1, the product blows up and you get <b>exploding gradients</b>. ReLU, good initialisation, normalisation and residual connections all exist to keep this product close to 1.</p>
+  </div>
+  <div class="callout interview"><div class="tag">🎯 Interview point</div><p>"What does <code>loss.backward()</code> do?" It traverses the computation graph autograd built during the forward pass, applies the chain rule, and <b>accumulates</b> the result into each parameter's <code>.grad</code>. That accumulation is why you must call <code>opt.zero_grad()</code> every step.</p></div>
+
+  <h2 id="code">Code: a neural net from scratch and in PyTorch</h2>
+  <script type="text/plain" class="snippet" data-title="numpy — forward + backward by hand (know this for whiteboard rounds)">
+    import numpy as np
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(500, 2)); y = (X[:, 0] * X[:, 1] > 0).astype(float).reshape(-1, 1)  # XOR-like
+
+    W1 = rng.normal(0, np.sqrt(2/2), (2, 16)); b1 = np.zeros(16)   # He init
+    W2 = rng.normal(0, np.sqrt(1/16), (16, 1)); b2 = np.zeros(1)
+    lr = 0.1
+    sigmoid = lambda z: 1 / (1 + np.exp(-z))
+
+    for step in range(2000):
+        # forward
+        z1 = X @ W1 + b1;  h = np.maximum(0, z1)        # ReLU
+        p  = sigmoid(h @ W2 + b2)
+        loss = -np.mean(y*np.log(p+1e-9) + (1-y)*np.log(1-p+1e-9))
+        # backward (chain rule)
+        dz2 = (p - y) / len(X)                          # dL/dz2 for sigmoid + BCE
+        dW2 = h.T @ dz2;  db2 = dz2.sum(0)
+        dh  = dz2 @ W2.T
+        dz1 = dh * (z1 > 0)                             # ReLU gradient
+        dW1 = X.T @ dz1;  db1 = dz1.sum(0)
+        # update
+        W1 -= lr*dW1; b1 -= lr*db1; W2 -= lr*dW2; b2 -= lr*db2
+    print("final loss", round(loss, 4), "acc", ((p > .5) == y).mean())
+  </script>
+  <script type="text/plain" class="snippet" data-title="pytorch — the same model in 10 lines">
+    import torch, torch.nn as nn
+    model = nn.Sequential(
+        nn.Linear(2, 16), nn.ReLU(),
+        nn.Linear(16, 1)                 # raw logit, no sigmoid here
+    )
+    loss_fn = nn.BCEWithLogitsLoss()
+    opt = torch.optim.Adam(model.parameters(), lr=1e-2)
+    Xt, yt = torch.tensor(X, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
+    for step in range(500):
+        opt.zero_grad()
+        loss = loss_fn(model(Xt), yt)
+        loss.backward()
+        opt.step()
+    probs = torch.sigmoid(model(Xt))     # apply sigmoid only at inference
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Why do we need non-linear activation functions?</summary><div class="ans"><p>A composition of linear maps is still linear: W₂(W₁x) = (W₂W₁)x. Without non-linearity, a 100-layer network is just linear regression. Non-linearities let the network bend the decision boundary and approximate any function (the universal approximation theorem).</p></div></details>
+  <details class="qa"><summary>Why ReLU over sigmoid in hidden layers?</summary><div class="ans"><p>(1) Its gradient is exactly 1 for positive inputs, so there are no vanishing gradients on that side. (2) It's cheap to compute. (3) It gives sparse activations. The downside is dead neurons when z &lt; 0 always; Leaky ReLU or GELU fix that.</p></div></details>
+  <details class="qa"><summary>Why cross-entropy instead of MSE for classification?</summary><div class="ans"><p>Cross-entropy with a sigmoid/softmax gives the clean gradient (p − y), which is large when the model is confidently wrong. MSE with a sigmoid multiplies by σ'(z), which is near 0 at saturation, so learning stalls exactly when the error is biggest. Cross-entropy is also the maximum-likelihood loss for a Bernoulli/categorical output.</p></div></details>
+  <details class="qa"><summary>What happens if you initialise all weights to zero?</summary><div class="ans"><p>Every neuron in a layer computes the same output and gets the same gradient, so they stay identical forever (the symmetry problem). The network effectively has one neuron per layer. Use random initialisation scaled by fan-in: Xavier/Glorot for tanh, He/Kaiming for ReLU.</p></div></details>
+  <details class="qa"><summary>Batch vs stochastic vs mini-batch gradient descent?</summary><div class="ans"><p>Batch uses the full dataset per step: exact gradient, slow, memory-heavy. SGD uses one sample: noisy and fast. Mini-batch (32–1024) is the practical middle ground. It uses GPUs efficiently, and its noise acts as a regulariser.</p></div></details>
+  <details class="qa"><summary>Why is depth better than width?</summary><div class="ans"><p>Depth lets the model compose features hierarchically (edges → shapes → objects), which can represent some functions with exponentially fewer parameters than a single wide layer. Deeper networks are harder to train, which is why ResNets, normalisation and good initialisation matter.</p></div></details>
+  <details class="qa"><summary>What is an epoch, a batch and an iteration?</summary><div class="ans"><p>Batch = the samples in one forward/backward pass. Iteration = one weight update. Epoch = one full pass over the training data. So iterations per epoch = N / batch_size.</p></div></details>
+</main>
+<script>
+(function(){
+  // ---------- Neuron playground ----------
+  const rnd=(s=>()=>(s=(s*16807)%2147483647)/2147483647)(42);
+  const pts=[];for(let i=0;i<70;i++){const a=rnd(),n=rnd();const fraud=(2.2*a+1.6*n-1.9+ (rnd()-.5)*0.9)>0;pts.push([a,n,fraud?1:0]);}
+  const acts={sigmoid:z=>1/(1+Math.exp(-z)),tanh:z=>Math.tanh(z),relu:z=>Math.max(0,z)};
+  const $=id=>document.getElementById(id);
+  function drawN(){
+    const w1=+$('w1').value,w2=+$('w2').value,b=+$('b').value,act=$('act').value;
+    $('w1v').textContent=w1.toFixed(1);$('w2v').textContent=w2.toFixed(1);$('bv').textContent=b.toFixed(1);
+    const {ctx,w,h,col}=DLP_canvas($('nc'),300);const pad=30;
+    ctx.clearRect(0,0,w,h);
+    const S=18;for(let i=0;i<w;i+=S)for(let j=0;j<h;j+=S){const x=(i-pad)/(w-2*pad),y=1-(j-pad)/(h-2*pad);const z=w1*x+w2*y+b;let a=acts[act](z);if(act==='tanh')a=(a+1)/2;if(act==='relu')a=Math.min(1,a/2);ctx.fillStyle=`rgba(226,85,79,${a*.35})`;ctx.fillRect(i,j,S,S);}
+    ctx.strokeStyle=col('--ink');ctx.lineWidth=2;ctx.beginPath();
+    if(Math.abs(w2)>1e-3){const y0=-(b)/w2,y1=-(w1+b)/w2;ctx.moveTo(pad,pad+(1-y0)*(h-2*pad));ctx.lineTo(w-pad,pad+(1-y1)*(h-2*pad));}ctx.stroke();
+    let correct=0;pts.forEach(([x,y,c])=>{const pred=(w1*x+w2*y+b)>0?1:0;if(pred===c)correct++;ctx.beginPath();ctx.arc(pad+x*(w-2*pad),pad+(1-y)*(h-2*pad),5,0,7);ctx.fillStyle=c?'#e2554f':col('--accent');ctx.fill();ctx.strokeStyle=col('--panel');ctx.lineWidth=1.5;ctx.stroke();});
+    ctx.fillStyle=col('--muted');ctx.font='12px ui-monospace';ctx.fillText('amount →',w-90,h-8);ctx.save();ctx.translate(12,70);ctx.rotate(-Math.PI/2);ctx.fillText('night-time →',-40,0);ctx.restore();
+    $('nout').innerHTML=`z = ${w1.toFixed(1)}·amount + ${w2.toFixed(1)}·night + (${b.toFixed(1)}) &nbsp;→&nbsp; ${act}(z) &nbsp;|&nbsp; accuracy on dots: <b>${Math.round(correct/pts.length*100)}%</b>`;
+  }
+  ['w1','w2','b','act'].forEach(id=>$(id).addEventListener('input',drawN));
+  // ---------- Activation explorer ----------
+  const A={
+    sigmoid:[z=>1/(1+Math.exp(-z)),z=>{const s=1/(1+Math.exp(-z));return s*(1-s)},'Max gradient 0.25 → stacks of sigmoids vanish fast.'],
+    tanh:[Math.tanh,z=>1-Math.tanh(z)**2,'Zero-centred, max gradient 1, still saturates at |z|>3.'],
+    relu:[z=>Math.max(0,z),z=>z>0?1:0,'Gradient exactly 1 for z>0, so no vanishing on that side. Zero for z<0 (dead neurons).'],
+    leaky:[z=>z>0?z:.1*z,z=>z>0?1:.1,'Small slope for z<0 keeps neurons alive (0.1 shown for visibility; usually 0.01).'],
+    gelu:[z=>.5*z*(1+Math.tanh(.7978845608*(z+.044715*z**3))),z=>{const e=1e-3,g=t=>.5*t*(1+Math.tanh(.7978845608*(t+.044715*t**3)));return (g(z+e)-g(z-e))/(2*e)},'Smooth ReLU used in BERT/GPT. Lets small negative values through.'],
+  };
+  let cur='relu';const seg=$('actSeg');
+  Object.keys(A).forEach(k=>{const b=document.createElement('button');b.textContent=k;b.onclick=()=>{cur=k;paintSeg();drawA();};seg.appendChild(b);});
+  function paintSeg(){[...seg.children].forEach(b=>b.classList.toggle('on',b.textContent===cur));}
+  function drawA(){
+    const {ctx,w,h,col}=DLP_canvas($('ac'),240);ctx.clearRect(0,0,w,h);
+    const X=z=>w/2+z*(w/12),Y=v=>h/2-v*(h/5);
+    ctx.strokeStyle=col('--line');ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,h/2);ctx.lineTo(w,h/2);ctx.moveTo(w/2,0);ctx.lineTo(w/2,h);ctx.stroke();
+    const [f,df,note]=A[cur];
+    const line=(fn,c,dash)=>{ctx.setLineDash(dash);ctx.strokeStyle=c;ctx.lineWidth=2.5;ctx.beginPath();for(let px=0;px<=w;px+=2){const z=(px-w/2)/(w/12);const v=fn(z);px?ctx.lineTo(px,Y(v)):ctx.moveTo(px,Y(v));}ctx.stroke();ctx.setLineDash([]);};
+    line(f,col('--accent'),[]);line(df,'#e2554f',[6,5]);
+    $('aout').textContent=note;
+  }
+  paintSeg();drawN();drawA();
+  window.addEventListener('resize',()=>{drawN();drawA();});window.addEventListener('dlp-theme',()=>{drawN();drawA();});
+})();
+</script>
+</body>
+</html>

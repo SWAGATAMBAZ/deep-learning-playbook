@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>07 · Embeddings & NLP · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="nlp">
+<main>
+  <div class="eyebrow">Lesson 07 · Week 5 · Text everywhere</div>
+  <h1>Embeddings &amp; NLP</h1>
+  <p class="lede">Banks drown in complaints, chats and KYC documents; e-commerce in reviews and search queries. The workhorse is the same everywhere: <b>turn text into vectors that capture meaning</b>, then classify, search or extract.</p>
+  <div class="toc"><a href="#embed">Embeddings</a><a href="#play">Embedding space</a><a href="#tok">Tokenisation</a><a href="#w2v">Word2Vec</a><a href="#ctx">Contextual</a><a href="#tasks">Tasks</a><a href="#choose">Which approach</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="embed">What an embedding is</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>An embedding is a GPS coordinate for meaning. Words, sentences, products or customers that mean or behave alike get coordinates close together. "Refund" and "chargeback" sit near each other; "refund" and "mortgage" are far apart. Once everything has coordinates, "find similar" is just "find nearby points".</p></div>
+  <div class="callout math"><div class="tag">📐 Cosine similarity</div><div class="formula">cos(a, b) = a·b / (‖a‖ ‖b‖)</div><p>It ranges from −1 to 1 and ignores vector length, only direction counts. If you L2-normalise vectors first, cosine similarity is just the dot product. That's why vector databases often store normalised embeddings.</p></div>
+
+  <h2 id="play">Explore an embedding space</h2>
+  <div class="widget">
+    <div class="widget-title">Click a point to find its nearest neighbours</div>
+    <div class="widget-sub">A toy 2-D projection of banking and e-commerce words. Real embeddings have 384–4096 dimensions, but the idea is identical.</div>
+    <canvas id="ec"></canvas>
+    <div class="readout" id="eout">Click any word.</div>
+  </div>
+
+  <h2 id="tok">Tokenisation: text → integer IDs</h2>
+  <ul>
+    <li><b>Word-level</b>: huge vocabulary, and any word not in it becomes [UNK].</li>
+    <li><b>Character-level</b>: no unknown words, but very long sequences.</li>
+    <li><b>Subword</b> (BPE in GPT, WordPiece in BERT, SentencePiece in T5/Llama): frequent words stay whole, rare ones split: "chargebacks" → "charge", "back", "s". This is the standard today and handles typos, new words and Hinglish reasonably well.</li>
+  </ul>
+  <div class="callout trap"><div class="tag">⚠️ Gotcha</div><p>Always use the <b>same tokenizer the model was pretrained with</b>. Token count ≠ word count. That matters for context limits and LLM API cost (about 1.3 tokens per English word, more for Indic languages).</p></div>
+
+  <h2 id="w2v">Word2Vec: "you shall know a word by the company it keeps"</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Slide a window over billions of sentences. Train a tiny network to predict the neighbouring words from a word (<b>skip-gram</b>), or a word from its neighbours (<b>CBOW</b>). The network's weight matrix <i>becomes</i> the embedding table. Words used in similar contexts end up with similar vectors, and the famous result is king − man + woman ≈ queen.</p></div>
+  <p><b>Negative sampling</b> makes it cheap. Instead of a softmax over the whole vocabulary, it learns to tell real (word, context) pairs from a few random fake pairs. The same trick powers item2vec and product2vec in e-commerce (sessions are "sentences", products are "words").</p>
+  <div class="callout interview"><div class="tag">🎯 The limitation interviewers ask about</div><p>Static embeddings give "bank" <b>one</b> vector whether you mean a river bank or HDFC Bank. Contextual models (ELMo → BERT) fix this: the vector depends on the whole sentence.</p></div>
+
+  <h2 id="ctx">Contextual and sentence embeddings</h2>
+  <div class="grid two">
+    <div class="card"><h4>BERT-style token embeddings</h4><p>Each token's vector depends on the sentence. Fine-tune them for classification and NER.</p></div>
+    <div class="card"><h4>Sentence embeddings (SBERT, E5, BGE)</h4><p>One vector per sentence, trained with <b>contrastive learning</b>: pull paraphrases together, push unrelated sentences apart. Use for semantic search, dedup, clustering and RAG retrieval.</p></div>
+  </div>
+  <div class="callout math"><div class="tag">📐 Contrastive (InfoNCE) loss in words</div><p>For each anchor, make its similarity to the positive high relative to all the negatives in the batch: L = −log( e<sup>sim(a,p)/τ</sup> / Σ<sub>j</sub> e<sup>sim(a,j)/τ</sup> ). Bigger batches give more negatives and usually better embeddings. The same loss trains CLIP and two-tower recommenders.</p></div>
+
+  <h2 id="tasks">Core NLP tasks in industry</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Task</th><th>Example</th><th>Model</th><th>Metric</th></tr>
+    <tr><td>Text classification</td><td>Route complaints to the right team; detect RBI-escalation risk</td><td>Fine-tuned BERT/DeBERTa; LLM zero-shot for cold start</td><td>Macro-F1</td></tr>
+    <tr><td>Sentiment / aspect sentiment</td><td>"Delivery slow, product great"</td><td>Fine-tuned encoder; ABSA models</td><td>F1 per aspect</td></tr>
+    <tr><td>NER / information extraction</td><td>Pull name, PAN, address, amount from KYC and invoices</td><td>BERT + token classification; LayoutLM for scanned forms; LLM extraction with schema</td><td>Entity-level F1</td></tr>
+    <tr><td>Semantic search</td><td>"phone with good camera under 20k"</td><td>Bi-encoder retrieval + cross-encoder re-rank</td><td>Recall@k, NDCG</td></tr>
+    <tr><td>Intent detection</td><td>Chatbot: "block my card" vs "card limit"</td><td>Small fine-tuned encoder (fast) or LLM</td><td>Accuracy, F1</td></tr>
+    <tr><td>Summarisation / generation</td><td>Summarise call transcripts for agents</td><td>LLM (decoder) with prompts or fine-tuning</td><td>ROUGE + human/LLM-judge eval</td></tr>
+  </table></div>
+
+  <h2 id="choose">TF-IDF vs fine-tuned BERT vs LLM: how to choose</h2>
+  <div class="callout win"><div class="tag">✅ Decision rule</div>
+  <ol>
+    <li><b>TF-IDF + logistic regression</b>: always the baseline. Fast, explainable, often 85–90% as good.</li>
+    <li><b>Fine-tuned small encoder</b> (DistilBERT, MiniLM, DeBERTa-small): when you have about 1k+ labels per class and need low latency and cost at high volume.</li>
+    <li><b>LLM zero/few-shot</b>: few or no labels, many classes that change often, or you need reasoning or extraction. Watch cost per call, latency and data privacy.</li>
+    <li><b>LLM-labelled data → distil into a small encoder</b>: get LLM quality at encoder cost. A very common industry pattern.</li>
+  </ol></div>
+
+  <h2 id="code">Code</h2>
+  <script type="text/plain" class="snippet" data-title="fine-tune DistilBERT for complaint classification (Hugging Face)">
+    from datasets import load_dataset
+    from transformers import (AutoTokenizer, AutoModelForSequenceClassification,
+                              TrainingArguments, Trainer)
+    import numpy as np, evaluate
+
+    ckpt = "distilbert-base-uncased"
+    tok = AutoTokenizer.from_pretrained(ckpt)
+    ds = load_dataset("csv", data_files={"train": "train.csv", "test": "test.csv"})
+    ds = ds.map(lambda b: tok(b["text"], truncation=True, max_length=256), batched=True)
+
+    model = AutoModelForSequenceClassification.from_pretrained(ckpt, num_labels=N_CLASSES)
+    f1 = evaluate.load("f1")
+    def metrics(p):
+        return f1.compute(predictions=np.argmax(p.predictions, -1),
+                          references=p.label_ids, average="macro")
+
+    args = TrainingArguments("out", learning_rate=2e-5, per_device_train_batch_size=32,
+                             num_train_epochs=3, weight_decay=0.01, warmup_ratio=0.1,
+                             eval_strategy="epoch", save_strategy="epoch",
+                             load_best_model_at_end=True, metric_for_best_model="f1", fp16=True)
+    Trainer(model=model, args=args, train_dataset=ds["train"], eval_dataset=ds["test"],
+            tokenizer=tok, compute_metrics=metrics).train()
+  </script>
+  <script type="text/plain" class="snippet" data-title="semantic search with sentence embeddings">
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+
+    enc = SentenceTransformer("BAAI/bge-small-en-v1.5")
+    faqs = ["How do I block my debit card?", "What is the UPI daily limit?",
+            "How to raise a chargeback for a failed payment?"]
+    E = enc.encode(faqs, normalize_embeddings=True)          # (3, 384)
+    q = enc.encode(["money deducted but merchant didn't receive it"], normalize_embeddings=True)
+    scores = (E @ q.T).ravel()                               # cosine, since vectors are normalised
+    print(faqs[int(np.argmax(scores))])                     # -> chargeback FAQ
+    # at scale: store E in FAISS / a vector DB and use approximate nearest-neighbour search
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Word2Vec vs BERT embeddings?</summary><div class="ans"><p>Word2Vec gives one static vector per word, trained by local context prediction. It's cheap but can't separate senses. BERT gives contextual vectors from a deep bidirectional transformer, so "bank" differs by sentence. BERT is much better for downstream tasks but heavier.</p></div></details>
+  <details class="qa"><summary>Why subword tokenisation?</summary><div class="ans"><p>It balances vocabulary size and coverage: no out-of-vocabulary words, rare words composed from pieces, and shorter sequences than character-level. It handles misspellings and domain jargon gracefully.</p></div></details>
+  <details class="qa"><summary>Bi-encoder vs cross-encoder?</summary><div class="ans"><p>A bi-encoder embeds query and document separately, so document vectors can be precomputed and searched with ANN. It's fast and used for retrieval. A cross-encoder feeds the pair together through one transformer. It's more accurate but must run per pair, so it's used to re-rank the top 50–100 results.</p></div></details>
+  <details class="qa"><summary>Your complaint classifier has 30 classes and some have only 20 examples. What do you do?</summary><div class="ans"><p>Merge or hierarchy-group rare classes, use class-weighted loss, augment with paraphrases (back-translation or LLM-generated), try few-shot methods (SetFit, or LLM zero-shot for rare classes), and report macro-F1 and per-class recall so the rare classes aren't hidden by the averages.</p></div></details>
+  <details class="qa"><summary>How do you handle text longer than 512 tokens?</summary><div class="ans"><p>Chunk with overlap and aggregate (mean/max pool or attention over chunk embeddings), truncate smartly (head + tail often works), use long-context models (Longformer, modern LLMs), or summarise first.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const P=[["refund",.72,.30],["chargeback",.78,.36],["dispute",.70,.40],["fraud",.85,.50],["scam",.90,.56],["phishing",.88,.62],
+    ["loan",.20,.70],["EMI",.25,.78],["mortgage",.14,.76],["interest",.28,.64],["credit score",.32,.84],
+    ["delivery",.22,.20],["shipping",.16,.24],["courier",.20,.12],["return",.55,.22],["discount",.40,.40],["coupon",.45,.46],["cashback",.52,.42]];
+  let sel=null,pts=[];
+  function draw(){
+    const {ctx,w,h,col}=DLP_canvas($('ec'),320);ctx.clearRect(0,0,w,h);
+    pts=P.map(([n,x,y])=>[n,30+x*(w-90),20+(1-y)*(h-40)]);
+    let nn=[];if(sel!==null){const [,sx,sy]=P[sel];nn=P.map(([n,x,y],i)=>[i,Math.hypot(x-sx,y-sy)]).filter(a=>a[0]!==sel).sort((a,b)=>a[1]-b[1]).slice(0,3);
+      nn.forEach(([i])=>{ctx.strokeStyle='rgba(226,85,79,.6)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(pts[sel][1],pts[sel][2]);ctx.lineTo(pts[i][1],pts[i][2]);ctx.stroke();});}
+    pts.forEach(([n,x,y],i)=>{const isN=nn.some(a=>a[0]===i);ctx.beginPath();ctx.arc(x,y,i===sel?8:6,0,7);ctx.fillStyle=i===sel?'#e2554f':isN?'#f59e0b':col('--accent');ctx.fill();ctx.fillStyle=col('--ink');ctx.font=(i===sel?'600 ':'')+'13px ui-sans-serif';ctx.fillText(n,x+10,y+4);});
+    if(sel!==null)$('eout').innerHTML=`Nearest to <b>${P[sel][0]}</b>: `+nn.map(([i,d])=>`${P[i][0]} <span style="color:var(--muted)">(${(1-d).toFixed(2)})</span>`).join(', ')+'. In production this is ANN search in FAISS or a vector DB.';
+  }
+  $('ec').addEventListener('click',e=>{const r=$('ec').getBoundingClientRect();const x=e.clientX-r.left,y=e.clientY-r.top;let best=null,bd=1e9;pts.forEach(([,px,py],i)=>{const d=Math.hypot(px-x,py-y);if(d<bd){bd=d;best=i;}});if(bd<40){sel=best;draw();}});
+  draw();window.addEventListener('resize',draw);window.addEventListener('dlp-theme',draw);
+})();
+</script>
+</body>
+</html>

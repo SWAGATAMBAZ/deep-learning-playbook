@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>08 · Recommender systems · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+<style>.rank{display:grid;gap:6px;margin-top:10px}.rank div{display:flex;align-items:center;gap:10px;font-size:14.5px}.rank .bar{height:10px;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--coral))}</style>
+</head>
+<body data-page="recsys">
+<main>
+  <div class="eyebrow">Lesson 08 · Week 6 · E-commerce, fintech cross-sell, content</div>
+  <h1>Recommender systems</h1>
+  <p class="lede">"Customers also bought", "Recommended credit card for you", the home feed. Every large e-commerce or fintech DS interview has a recsys question, usually framed as a <b>system design</b> problem.</p>
+  <div class="toc"><a href="#funnel">The funnel</a><a href="#cf">Collaborative filtering</a><a href="#tt">Two-tower</a><a href="#rank">Ranking models</a><a href="#seq">Sequential</a><a href="#metrics">Metrics</a><a href="#issues">Cold start &amp; bias</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="funnel">The industry funnel (draw this first in any design round)</h2>
+  <div class="grid">
+    <div class="card"><div class="kicker">STAGE 1 · millions → ~1000</div><h4>Candidate generation</h4><p>Fast and recall-oriented. Two-tower ANN retrieval, item-to-item co-visitation, popular-in-category, "buy it again".</p></div>
+    <div class="card"><div class="kicker">STAGE 2 · 1000 → 100</div><h4>Ranking</h4><p>A heavy model with rich user × item × context features predicts P(click), P(buy). DCN, DLRM, DIN, or GBDT.</p></div>
+    <div class="card"><div class="kicker">STAGE 3 · 100 → 20</div><h4>Re-ranking</h4><p>Business rules: diversity, freshness, dedup, sponsored slots, stock and margin, fairness.</p></div>
+  </div>
+  <div class="callout layman"><div class="tag">🧒 Why a funnel?</div><p>You can't run a heavy neural ranker over 50 million products in 100 ms. So a cheap net catches the plausible fish, and an expensive net picks the best of those.</p></div>
+
+  <h2 id="cf">Collaborative filtering &amp; matrix factorisation</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>"People like you also liked…". Put users as rows and items as columns in a giant, mostly empty table of interactions. Matrix factorisation guesses the blanks by giving each user and each item a short taste vector, with dimensions like "likes budget electronics" or "premium fashion", so that user·item ≈ rating. The taste dimensions are learned, not hand-labelled.</p></div>
+  <div class="callout math"><div class="tag">📐 Objective</div><div class="formula">min Σ<sub>(u,i)∈observed</sub> (r<sub>ui</sub> − p<sub>u</sub>·q<sub>i</sub> − b<sub>u</sub> − b<sub>i</sub>)² + λ(‖p‖² + ‖q‖²)</div>
+  <p>With <b>implicit feedback</b> (clicks and purchases, no ratings), unobserved ≠ disliked. Use BPR loss (rank observed items above sampled negatives) or weighted ALS. <b>Neural CF (NCF)</b> swaps the dot product for an MLP over the two embeddings, though a well-tuned dot product is often just as good.</p></div>
+
+  <h2 id="tt">Two-tower retrieval</h2>
+  <div class="widget">
+    <div class="widget-title">Two-tower scoring: user vector · item vector</div>
+    <div class="widget-sub">The user tower turns behaviour into a taste vector, and the item tower does the same for products. The score is a dot product. Move the user's tastes and watch the ranking change instantly. This is why retrieval is fast: item vectors are precomputed.</div>
+    <div class="controls">
+      <div class="control"><label>electronics affinity <b id="u0v"></b></label><input type="range" id="u0" min="-1" max="1" step="0.05" value="0.8"></div>
+      <div class="control"><label>fashion affinity <b id="u1v"></b></label><input type="range" id="u1" min="-1" max="1" step="0.05" value="0.1"></div>
+      <div class="control"><label>premium vs budget <b id="u2v"></b></label><input type="range" id="u2" min="-1" max="1" step="0.05" value="-0.5"></div>
+    </div>
+    <div class="rank" id="rank"></div>
+  </div>
+  <ul>
+    <li><b>User tower</b>: user ID embedding + recent-history embeddings (pooled or GRU/transformer) + context (time, device, location).</li>
+    <li><b>Item tower</b>: item ID + category + brand + price + text/image embeddings. Content features help cold-start items.</li>
+    <li><b>Training</b>: softmax over in-batch negatives (other users' positives act as negatives), with a correction for popularity bias in sampling.</li>
+    <li><b>Serving</b>: precompute all item vectors, index them in FAISS/ScaNN, compute the user vector per request, and run ANN search for the top-k in milliseconds.</li>
+  </ul>
+
+  <h2 id="rank">Ranking models</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Model</th><th>Core idea</th></tr>
+    <tr><td><b>Wide &amp; Deep</b></td><td>Memorise specific crosses (wide) + generalise via embeddings (deep)</td></tr>
+    <tr><td><b>DeepFM</b></td><td>Factorisation-machine pairwise interactions + a deep MLP, no manual crosses</td></tr>
+    <tr><td><b>DCN-v2</b></td><td>Explicit cross layers learn bounded-degree feature interactions efficiently</td></tr>
+    <tr><td><b>DLRM</b> (Meta)</td><td>Embeddings for sparse features + MLP for dense, then pairwise dot-product interactions</td></tr>
+    <tr><td><b>DIN</b> (Alibaba)</td><td>Attention over the user's history <i>with respect to the candidate item</i>. Only relevant past behaviour counts.</td></tr>
+    <tr><td><b>Multi-task (MMoE)</b></td><td>One network predicting click, add-to-cart and purchase together with shared experts</td></tr>
+  </table></div>
+
+  <h2 id="seq">Sequential / session recommenders</h2>
+  <p>Treat a session's clicks like a sentence and predict the next item. <b>GRU4Rec</b> (RNN), <b>SASRec</b> (causal transformer, next-item), and <b>BERT4Rec</b> (masked-item prediction). These are strong when users are anonymous or intent shifts within a session ("now shopping for shoes").</p>
+
+  <h2 id="metrics">Metrics</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Metric</th><th>Meaning</th><th>Stage</th></tr>
+    <tr><td>Recall@K</td><td>Fraction of the relevant items found in the top K</td><td>Retrieval</td></tr>
+    <tr><td>NDCG@K</td><td>Rewards putting relevant items <b>higher</b> (log-discounted by position)</td><td>Ranking</td></tr>
+    <tr><td>MAP, MRR</td><td>Average precision / reciprocal rank of the first hit</td><td>Ranking</td></tr>
+    <tr><td>AUC / log-loss</td><td>Pointwise click-prediction quality and calibration</td><td>Ranker training</td></tr>
+    <tr><td>Coverage, diversity, novelty</td><td>Are we stuck recommending the same bestsellers?</td><td>System health</td></tr>
+    <tr><td><b>Online A/B</b>: CTR, conversion, GMV/revenue per session</td><td>The only metric that really decides</td><td>Launch</td></tr>
+  </table></div>
+
+  <h2 id="issues">Cold start, feedback loops and bias</h2>
+  <div class="grid two">
+    <div class="card"><h4>New user</h4><p>Popular-in-region, onboarding questions, context features (device, location, referrer), session-based recommendations from the first click.</p></div>
+    <div class="card"><h4>New item</h4><p>Content features in the item tower (text, image, category, price), exploration slots (bandits), boosting freshness.</p></div>
+    <div class="card"><h4>Position bias</h4><p>Top slots get clicked anyway. Add position as a training feature and set it to a constant at serving time, or use inverse propensity weighting.</p></div>
+    <div class="card"><h4>Feedback loop / popularity bias</h4><p>The model only learns from what it showed. Mitigate with exploration (ε-greedy, Thompson sampling), logQ correction and diversity re-ranking.</p></div>
+  </div>
+
+  <h2 id="code">Code: two-tower with in-batch negatives</h2>
+  <script type="text/plain" class="snippet" data-title="pytorch — two-tower retrieval">
+    import torch, torch.nn as nn, torch.nn.functional as F
+
+    class Tower(nn.Module):
+        def __init__(self, n_ids, n_feats, d=64):
+            super().__init__()
+            self.id_emb = nn.Embedding(n_ids, d)
+            self.mlp = nn.Sequential(nn.Linear(d + n_feats, 128), nn.ReLU(), nn.Linear(128, d))
+        def forward(self, ids, feats):
+            return F.normalize(self.mlp(torch.cat([self.id_emb(ids), feats], -1)), dim=-1)
+
+    user_tower, item_tower = Tower(N_USERS, 10), Tower(N_ITEMS, 20)
+    tau = 0.05                                                     # temperature
+
+    def step(u_ids, u_feats, i_ids, i_feats):                     # each row = (user, item they bought)
+        u = user_tower(u_ids, u_feats)                             # (B, d)
+        v = item_tower(i_ids, i_feats)                             # (B, d)
+        logits = u @ v.T / tau                                     # (B, B): diagonal = positives
+        labels = torch.arange(len(u))                              # others in batch = negatives
+        return F.cross_entropy(logits, labels)
+
+    # serving: item_vecs = item_tower(all_items) -> FAISS index; per request: index.search(u, k=500)
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Design "Recommended for you" for an e-commerce home page.</summary><div class="ans"><p>Clarify the objective (CTR vs GMV vs long-term retention) and the latency budget. Build a multi-source candidate generation stage: two-tower ANN, co-purchase item-to-item, recently viewed, trending in segment. Then a ranker (DCN/DLRM or LightGBM) with user, item, context and cross features, predicting P(click) and P(purchase) via multi-task learning. Re-rank for diversity, stock, business rules. Use time-split offline evaluation (Recall@K, NDCG), then an online A/B test on GMV/session with guardrails. Cover cold start, position bias and a monitoring and retraining cadence.</p></div></details>
+  <details class="qa"><summary>Why in-batch negatives, and what's the bias?</summary><div class="ans"><p>They're free: the other positives in the batch serve as negatives, so you get many negatives per step at no extra cost. But popular items appear more often as negatives, so they get unfairly pushed down. Apply the logQ correction (subtract log of the item's sampling probability from the logit) or mix in uniformly sampled negatives.</p></div></details>
+  <details class="qa"><summary>Explicit vs implicit feedback?</summary><div class="ans"><p>Explicit feedback means ratings: sparse, but with clear signal including negatives. Implicit means clicks, views, purchases: abundant but noisy, with no true negatives (not clicked might mean not seen). Implicit needs ranking losses (BPR, sampled softmax) and careful negative sampling.</p></div></details>
+  <details class="qa"><summary>Offline NDCG improved but the A/B test was flat. Why?</summary><div class="ans"><p>Common reasons: offline data is biased by the old model's exposure (counterfactual problem), the metric doesn't match the business goal, train/serve skew in features, latency increased, novelty effects, or the gains were on segments that don't drive revenue. Check logging and feature parity first.</p></div></details>
+  <details class="qa"><summary>How do you recommend a credit card or loan product in a bank?</summary><div class="ans"><p>The catalogue is small, so it's a <b>propensity / uplift</b> problem rather than retrieval: a multi-label or per-product classifier (GBDT or multi-task NN) on transaction and demographic features, plus eligibility rules and risk filters. Use uplift modelling to target people the offer actually changes, and add fairness and regulatory checks.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const items=[["Budget Android phone",[.9,0,-.8]],["Flagship phone",[.9,0,.9]],["Wireless earbuds",[.7,.2,-.2]],["Designer handbag",[0,.9,.9]],
+    ["Running shoes",[.1,.6,-.1]],["Fast-fashion T-shirt",[0,.8,-.9]],["Gaming laptop",[.9,0,.6]],["Smartwatch",[.6,.4,.3]],["Phone case",[.6,.1,-.9]]];
+  function draw(){
+    const u=[+$('u0').value,+$('u1').value,+$('u2').value];['u0','u1','u2'].forEach((id,i)=>$(id+'v').textContent=u[i].toFixed(2));
+    const s=items.map(([n,v])=>[n,v.reduce((a,x,i)=>a+x*u[i],0)]).sort((a,b)=>b[1]-a[1]);
+    const mx=Math.max(...s.map(x=>Math.abs(x[1])))||1;
+    $('rank').innerHTML=s.map(([n,v],i)=>`<div><span style="width:22px;font-family:var(--mono);color:var(--muted)">${i+1}</span><span style="width:190px">${n}</span><span class="bar" style="width:${Math.max(2,(v+mx)/(2*mx)*260)}px;opacity:${i<3?1:.45}"></span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">${v.toFixed(2)}</span></div>`).join('');
+  }
+  ['u0','u1','u2'].forEach(id=>$(id).addEventListener('input',draw));draw();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>10 · Anomaly detection & GNNs · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="anomaly">
+<main>
+  <div class="eyebrow">Lesson 10 · Week 7 · Fraud, AML, risk</div>
+  <h1>Anomaly detection &amp; graph neural networks</h1>
+  <p class="lede">Fraud is rare, labels arrive late, and fraudsters work in <b>networks</b>. Two deep learning tools appear again and again in fintech: <b>autoencoders</b> to flag "this doesn't look normal", and <b>GNNs</b> to catch "this account is connected to bad actors".</p>
+  <div class="toc"><a href="#ae">Autoencoders</a><a href="#thr">Threshold live</a><a href="#vae">VAE</a><a href="#gnn">GNN intuition</a><a href="#types">GCN / SAGE / GAT</a><a href="#fin">Fintech uses</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="ae">Autoencoders: learn "normal", flag the rest</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Train a network to squeeze a transaction into a tiny summary (the <b>bottleneck</b>) and rebuild it. Train only on normal transactions. It becomes very good at rebuilding normal ones and bad at rebuilding anything it has never seen. So a <b>high reconstruction error = suspicious</b>. You need no fraud labels at all.</p></div>
+  <div class="callout math"><div class="tag">📐 Structure</div><div class="formula">x → encoder → z (small) → decoder → x̂ &nbsp;&nbsp; score = ‖x − x̂‖²</div><p>If the bottleneck were as wide as the input, the network could just copy the input. The narrow z forces it to learn the main structure of normal data. It's like a non-linear PCA.</p></div>
+
+  <h2 id="thr">Choosing the alert threshold</h2>
+  <div class="widget">
+    <div class="widget-title">Reconstruction-error threshold vs. business trade-off</div>
+    <div class="widget-sub">There are 10,000 transactions a day and 0.5% are fraud. Blue = normal error distribution, red = fraud. Slide the threshold and see the precision, recall and analyst workload.</div>
+    <div class="controls"><div class="control"><label>threshold <b id="tv"></b></label><input type="range" id="t" min="0.5" max="6" step="0.05" value="2.6"></div></div>
+    <canvas id="hc"></canvas>
+    <div class="readout" id="hout"></div>
+  </div>
+
+  <h2 id="vae">Variational autoencoder (VAE), briefly</h2>
+  <p>A VAE's encoder outputs a <b>distribution</b> (mean μ and variance σ²) instead of a point. You sample z using the <b>reparameterisation trick</b> z = μ + σ·ε so gradients can flow through the sampling. The loss is reconstruction + a KL penalty that keeps the latent space close to N(0, I). That smooth latent space lets you <b>generate</b> new samples (synthetic data) and gives a probabilistic anomaly score. See <a href="genai.html">Generative AI</a>.</p>
+  <div class="callout interview"><div class="tag">🎯 Interview point</div><p>Always benchmark against <b>Isolation Forest</b> and simple rules. Autoencoders win on high-dimensional or sequential inputs. With labels available (even a few), a supervised model on those labels plus the AE score as a feature usually beats either alone.</p></div>
+
+  <h2 id="gnn">Graph neural networks: "you are who you're connected to"</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>A mule account may look perfectly normal on its own. But it shares a device with three flagged accounts and receives money from a known scam wallet. A GNN lets each node <b>gather messages from its neighbours</b>, then neighbours of neighbours, so a node's representation absorbs its neighbourhood's risk. Fraud rings light up as connected clusters.</p></div>
+  <div class="callout math"><div class="tag">📐 Message passing (one layer)</div><div class="formula">h<sub>v</sub><sup>(k+1)</sup> = σ( W · AGG({ h<sub>u</sub><sup>(k)</sup> : u ∈ N(v) }) + B · h<sub>v</sub><sup>(k)</sup> )</div><p>Each layer = one hop. Two or three layers is typical. Too many and all nodes start to look the same (<b>over-smoothing</b>).</p></div>
+
+  <h2 id="types">GCN vs GraphSAGE vs GAT</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Model</th><th>Aggregation</th><th>Strength</th></tr>
+    <tr><td><b>GCN</b></td><td>Degree-normalised average of neighbours</td><td>Simple; <i>transductive</i> (whole graph fixed at training time)</td></tr>
+    <tr><td><b>GraphSAGE</b></td><td>Sample K neighbours, then mean/max/LSTM aggregate, then concat with self</td><td><b>Inductive</b>: embeds brand-new nodes; scales via sampling. The production favourite (Pinterest's PinSage).</td></tr>
+    <tr><td><b>GAT</b></td><td>Attention weights per neighbour</td><td>Learns which neighbours matter (the shared device more than the shared city)</td></tr>
+    <tr><td><b>Heterogeneous GNN (R-GCN, HGT)</b></td><td>Separate weights per edge type</td><td>User–card–device–merchant–IP graphs</td></tr>
+  </table></div>
+
+  <h2 id="fin">Where they're used in fintech</h2>
+  <div class="grid">
+    <div class="card"><h4>Fraud rings</h4><p>Accounts linked by device, IP, phone, address. Node classification on the account graph.</p></div>
+    <div class="card"><h4>AML / mule detection</h4><p>Money-flow graphs: fan-in/fan-out, rapid layering cycles. Edge and subgraph patterns.</p></div>
+    <div class="card"><h4>Credit risk</h4><p>Supply-chain or guarantor networks for SME lending, where defaults propagate.</p></div>
+    <div class="card"><h4>Recommendations</h4><p>User–item bipartite graphs (PinSage, LightGCN).</p></div>
+  </div>
+  <div class="callout trap"><div class="tag">⚠️ Practical traps</div><p><b>Temporal leakage</b>: build the graph only from edges that existed at prediction time. <b>Label leakage</b> through neighbours whose fraud labels were confirmed later. <b>Latency</b>: precompute embeddings in batch and update incrementally, or use GraphSAGE for new nodes. Many teams simply feed graph features (degree, PageRank, embeddings) into a GBDT.</p></div>
+
+  <h2 id="code">Code</h2>
+  <script type="text/plain" class="snippet" data-title="autoencoder anomaly scorer">
+    import torch, torch.nn as nn
+
+    class AE(nn.Module):
+        def __init__(self, d_in, d_z=8):
+            super().__init__()
+            self.enc = nn.Sequential(nn.Linear(d_in, 64), nn.ReLU(), nn.Linear(64, d_z))
+            self.dec = nn.Sequential(nn.Linear(d_z, 64), nn.ReLU(), nn.Linear(64, d_in))
+        def forward(self, x):
+            return self.dec(self.enc(x))
+
+    ae = AE(d_in=X_normal.shape[1])
+    opt = torch.optim.Adam(ae.parameters(), 1e-3)
+    for epoch in range(50):                       # train on NORMAL data only
+        for xb in loader_normal:
+            opt.zero_grad(); loss = ((ae(xb) - xb) ** 2).mean(); loss.backward(); opt.step()
+
+    with torch.no_grad():
+        score = ((ae(X_new) - X_new) ** 2).mean(dim=1)      # per-row anomaly score
+    threshold = torch.quantile(score_val_normal, 0.995)      # e.g. alert on top 0.5%
+  </script>
+  <script type="text/plain" class="snippet" data-title="GraphSAGE node classification with PyTorch Geometric">
+    import torch, torch.nn.functional as F
+    from torch_geometric.nn import SAGEConv
+
+    class FraudSAGE(torch.nn.Module):
+        def __init__(self, d_in, d_h=64):
+            super().__init__()
+            self.c1 = SAGEConv(d_in, d_h)
+            self.c2 = SAGEConv(d_h, d_h)
+            self.out = torch.nn.Linear(d_h, 1)
+        def forward(self, x, edge_index):
+            h = F.relu(self.c1(x, edge_index))          # 1 hop
+            h = F.dropout(h, 0.3, self.training)
+            h = F.relu(self.c2(h, edge_index))          # 2 hops
+            return self.out(h).squeeze(-1)
+
+    # data.x: account features, data.edge_index: shared device/IP/transfer edges
+    model = FraudSAGE(data.num_features)
+    logits = model(data.x, data.edge_index)
+    loss = F.binary_cross_entropy_with_logits(logits[data.train_mask], data.y[data.train_mask].float(),
+                                              pos_weight=torch.tensor(20.0))
+    # big graphs: torch_geometric.loader.NeighborLoader for mini-batch neighbour sampling
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>How do you detect fraud with no labels?</summary><div class="ans"><p>Unsupervised anomaly detection: Isolation Forest, autoencoder reconstruction error, density or distance methods. Then use analyst feedback to build labels over time and move to semi-supervised or supervised learning. Include rules for known patterns. Evaluate with precision on top-K alerts against investigator capacity.</p></div></details>
+  <details class="qa"><summary>Why might an autoencoder fail to detect anomalies?</summary><div class="ans"><p>If it's too powerful (wide bottleneck, overfit), it reconstructs anomalies well too. If the training "normal" data is contaminated with fraud, it learns fraud as normal. Fixes: a narrower bottleneck, regularisation (denoising or sparse AE), cleaner training data, and scoring per-feature errors.</p></div></details>
+  <details class="qa"><summary>What is over-smoothing in GNNs?</summary><div class="ans"><p>With many message-passing layers, each node aggregates from nearly the whole graph, so embeddings converge and become indistinguishable. Use 2–3 layers, residual or jumping-knowledge connections, or attention.</p></div></details>
+  <details class="qa"><summary>Transductive vs inductive GNNs?</summary><div class="ans"><p>Transductive (vanilla GCN) learns on a fixed graph and can't directly embed unseen nodes. Inductive (GraphSAGE, GAT) learns an aggregation <i>function</i> that can embed new nodes from their features and neighbours. That's essential for fraud, where new accounts appear constantly.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const g=(x,m,s)=>Math.exp(-((x-m)**2)/(2*s*s))/(s*Math.sqrt(2*Math.PI));
+  const cdf=(x,m,s)=>{const z=(x-m)/(s*Math.SQRT2);const t=1/(1+.3275911*Math.abs(z));const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*Math.exp(-z*z);return .5*(1+(z>=0?y:-y));};
+  const N=9950,F=50,mn=1.4,sn=.55,mf=3.4,sf=.9;
+  function draw(){
+    const t=+$('t').value;$('tv').textContent=t.toFixed(2);
+    const {ctx,w,h,col}=DLP_canvas($('hc'),220);ctx.clearRect(0,0,w,h);
+    const X=x=>20+x/6.5*(w-40),Yn=v=>h-25-v*(h-45)/0.75,Yf=v=>h-25-v*(h-45)/0.5;
+    ctx.fillStyle='rgba(67,56,202,.25)';ctx.strokeStyle=col('--accent');ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(X(0),h-25);for(let x=0;x<=6.5;x+=.05)ctx.lineTo(X(x),Yn(g(x,mn,sn)));ctx.lineTo(X(6.5),h-25);ctx.fill();ctx.stroke();
+    ctx.fillStyle='rgba(226,85,79,.25)';ctx.strokeStyle='#e2554f';ctx.beginPath();ctx.moveTo(X(0),h-25);for(let x=0;x<=6.5;x+=.05)ctx.lineTo(X(x),Yf(g(x,mf,sf)));ctx.lineTo(X(6.5),h-25);ctx.fill();ctx.stroke();
+    ctx.strokeStyle=col('--ink');ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(X(t),8);ctx.lineTo(X(t),h-20);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle=col('--muted');ctx.font='12px ui-monospace';ctx.fillText('reconstruction error →',w-170,h-6);ctx.fillText('alert ▶',X(t)+4,18);
+    const fp=N*(1-cdf(t,mn,sn)),tp=F*(1-cdf(t,mf,sf));const prec=tp/(tp+fp||1),rec=tp/F;
+    $('hout').innerHTML=`alerts/day: <b>${Math.round(tp+fp)}</b> &nbsp;|&nbsp; frauds caught: <b>${tp.toFixed(1)}/${F}</b> (recall ${(rec*100).toFixed(0)}%) &nbsp;|&nbsp; precision <b>${(prec*100).toFixed(1)}%</b> &nbsp;|&nbsp; ${tp+fp>300?'<span style="color:var(--coral)">analysts overwhelmed</span>':rec<.5?'<span style="color:var(--coral)">missing most fraud</span>':'<span style="color:var(--green)">workable trade-off</span>'}`;
+  }
+  $('t').addEventListener('input',draw);draw();window.addEventListener('resize',draw);window.addEventListener('dlp-theme',draw);
+})();
+</script>
+</body>
+</html>

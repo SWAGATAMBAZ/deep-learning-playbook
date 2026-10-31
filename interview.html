@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>15 · Interview question bank · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+<style>
+.filters{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
+.filters button{border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:99px;padding:5px 12px;font:inherit;font-size:13.5px;cursor:pointer}
+.filters button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.flash{min-height:220px;display:flex;flex-direction:column;justify-content:space-between}
+.flash .fq{font-family:var(--serif);font-size:23px;line-height:1.35}
+.flash .fa{display:none;margin-top:14px;padding-top:14px;border-top:1px dashed var(--line)}
+.flash.show .fa{display:block}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;align-items:center}
+.stat{font-size:13px;color:var(--muted)}
+input.search{font:inherit;font-size:15px;padding:9px 13px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);width:100%;max-width:420px}
+</style>
+</head>
+<body data-page="interview">
+<main>
+  <div class="eyebrow">Ongoing · 15 a day</div>
+  <h1>Interview question bank</h1>
+  <p class="lede">The deep learning questions that come up most in DS / DS II loops, with short answers you can say in about 30 seconds. Use <b>flashcard mode</b> daily; it remembers which ones you've nailed.</p>
+
+  <div class="widget">
+    <div class="widget-title">Flashcards</div>
+    <div class="filters" id="ff"></div>
+    <div class="card flash" id="card">
+      <div><span class="pill" id="ftag"></span><div class="fq" id="fq"></div><div class="fa" id="fa"></div></div>
+      <div class="row">
+        <button class="btn" id="reveal">Reveal answer <span class="kbd">space</span></button>
+        <button class="btn" id="know" style="display:none">✓ Knew it</button>
+        <button class="btn" id="again" style="display:none">↻ Review again</button>
+        <span class="stat" id="fstat"></span>
+      </div>
+    </div>
+  </div>
+
+  <h2>All questions</h2>
+  <input class="search" id="search" placeholder="Search e.g. dropout, attention, imbalance…">
+  <div id="list"></div>
+
+  <h2>Talking about your DL project (the question you'll definitely get)</h2>
+  <div class="callout win"><div class="tag">✅ A structure that works</div>
+  <ol>
+    <li><b>Business problem and metric</b>: "Card fraud was costing ₹X/month; the goal was recall at 0.5% false-decline rate."</li>
+    <li><b>Baseline</b>: "LightGBM on 120 velocity features gave PR-AUC 0.41."</li>
+    <li><b>Why deep learning</b>: "Fraud showed up in the <i>sequence</i> of transactions, which aggregates were losing, so I added a GRU over the last 50 transactions."</li>
+    <li><b>Key decisions and trade-offs</b>: loss (focal), validation (out-of-time), latency (distilled, ONNX, 8 ms p95), explainability (SHAP on the hybrid).</li>
+    <li><b>Result in business terms</b>: "+6 pts recall at the same FPR ≈ ₹Y/month saved; A/B tested for 4 weeks."</li>
+    <li><b>What you'd do next / what went wrong</b>: shows maturity.</li>
+  </ol></div>
+</main>
+<script>
+(function(){
+const Q=[
+["Foundations","Why do we need non-linear activations?","Without them, any stack of layers collapses into a single linear transform, so the network can only learn linear boundaries."],
+["Foundations","Explain backpropagation in one minute.","A forward pass computes the loss. Backprop applies the chain rule from the loss backwards through each layer, computing ∂L/∂w for every weight by reusing upstream gradients. The optimizer then steps each weight against its gradient."],
+["Foundations","Why ReLU over sigmoid?","Its gradient is 1 for positive inputs, so there's no vanishing on that side. It's cheap and gives sparse activations. Sigmoid saturates (max gradient 0.25), so deep stacks vanish."],
+["Foundations","Why cross-entropy rather than MSE for classification?","With sigmoid/softmax the CE gradient is (p − y), which is large when confidently wrong. MSE multiplies by σ′, which is near 0 when saturated, so learning stalls. CE is also the maximum-likelihood loss."],
+["Foundations","What happens with all-zero weight initialisation?","Symmetry: every neuron computes and updates identically, so the layer behaves like one neuron. Use random He (ReLU) or Xavier (tanh) initialisation."],
+["Foundations","What's the vanishing gradient problem?","Gradients are products of many per-layer derivatives. If those are below 1, early layers get near-zero updates. Fixes: ReLU, good init, normalisation, residual connections, LSTM gates."],
+["Foundations","Epoch vs batch vs iteration?","Batch = samples per update. Iteration = one update. Epoch = one pass over the data, i.e. N/batch iterations."],
+["Training","Your model overfits. List fixes in order.","Early stopping, more or augmented data, dropout and weight decay, a smaller model, transfer learning. Also check the validation split mimics production."],
+["Training","Your loss is NaN. What do you check?","LR too high, log(0) or division by zero, unnormalised inputs, exploding gradients (clip them), fp16 overflow (use a GradScaler), bad labels."],
+["Training","Adam vs SGD?","Adam has adaptive per-parameter steps plus momentum: fast and low-tuning, the default (AdamW). SGD+momentum can generalise slightly better for CNNs when well tuned."],
+["Training","What's AdamW?","Adam with weight decay applied directly to the weights rather than through the adaptive gradient, giving correct, uniform regularisation and better generalisation."],
+["Training","BatchNorm: what and why?","It normalises each feature over the batch, then applies a learned scale and shift. Stabilises and speeds up training and allows higher LRs. Uses running stats at eval, so remember model.eval()."],
+["Training","BatchNorm vs LayerNorm?","BN normalises over the batch per feature (CNNs, depends on batch size). LN normalises over features per sample (transformers and RNNs, batch-independent)."],
+["Training","How does dropout work at train vs test?","Training: zero units with probability p and scale the rest by 1/(1−p). Test: nothing is dropped. It acts like an ensemble of sub-networks."],
+["Training","Why use a learning-rate warm-up?","Early on, weights are random and Adam's variance estimates are unreliable, so big steps can destabilise training (especially transformers). Ramping the LR up avoids early divergence."],
+["Training","How do you handle class imbalance?","Right metrics (PR-AUC, recall@FPR), weighted or focal loss, resampling or balanced batches, threshold tuning from the cost matrix, and re-calibration."],
+["Training","Explain focal loss.","CE scaled by (1−p_t)^γ: easy, well-classified examples are down-weighted so training focuses on hard ones. Invented for dense object detection; useful for heavy imbalance."],
+["Training","What's gradient clipping?","Rescale gradients when their norm exceeds a threshold, preventing exploding gradients in RNNs and transformers."],
+["Training","How do you tune hyperparameters?","LR first, on a log scale. Random search or Bayesian (Optuna) with early-stopping pruning, not grid search. Then capacity and regularisation."],
+["Training","What's transfer learning and when does it fail?","Reuse pretrained representations and fine-tune on your task. It struggles when the domain differs greatly; then fine-tune more layers or pretrain on in-domain data. Use a low LR to avoid catastrophic forgetting."],
+["CNN","Why CNNs for images over MLPs?","Local connectivity and weight sharing give far fewer parameters, translation equivariance and hierarchical features."],
+["CNN","Conv output size formula?","⌊(W − K + 2P)/S⌋ + 1. Parameters = (K·K·C_in + 1)·C_out."],
+["CNN","What do residual connections solve?","Degradation and vanishing gradients in very deep nets. The block learns F(x) and outputs F(x)+x, and the identity path carries gradients directly."],
+["CNN","What's a 1×1 convolution for?","Mixing channels per pixel: changing the channel count cheaply (bottlenecks) and adding non-linearity."],
+["CNN","CNN vs ViT?","CNNs have strong inductive biases, so they're data-efficient. ViTs use global attention with weak biases, so they need lots of data or pretraining but scale better."],
+["RNN","Why LSTM over vanilla RNN?","The additive cell-state update with a forget gate keeps gradients alive over long sequences. A vanilla RNN's repeated multiplication makes them vanish."],
+["RNN","Name the LSTM gates.","Forget (what to erase), input (what to write), output (what to expose). Plus a candidate cell value."],
+["RNN","GRU vs LSTM?","GRU has 2 gates and no separate cell state, so it has fewer parameters and is faster. Performance is usually similar."],
+["RNN","Why did transformers replace RNNs?","Parallel training, any token pair one hop apart (long-range dependencies), and they scale with data and pretraining."],
+["Transformers","Write the attention formula.","softmax(QKᵀ/√d_k)·V"],
+["Transformers","Why scale by √d_k?","The dot-product variance grows with d_k, so large scores saturate the softmax into one-hot and kill gradients. Scaling keeps variance around 1."],
+["Transformers","Why multi-head attention?","Different heads capture different relationships in different subspaces at about the same total cost."],
+["Transformers","Why positional encoding?","Self-attention is permutation-invariant, so order has to be injected: sinusoidal, learned, or rotary (RoPE)."],
+["Transformers","BERT vs GPT?","BERT: encoder, bidirectional, masked LM, good for understanding tasks. GPT: decoder, causal mask, next-token prediction, good for generation."],
+["Transformers","Complexity of self-attention?","O(n²·d) time and O(n²) memory in sequence length. Mitigations: FlashAttention, sparse or windowed attention, KV cache at inference."],
+["Transformers","What is a causal mask?","It sets the scores for future positions to −∞ before the softmax so token t only attends to tokens ≤ t. Used in autoregressive decoders."],
+["NLP","Word2Vec vs BERT embeddings?","Word2Vec gives static vectors (one per word, no context). BERT gives contextual vectors (meaning depends on the sentence)."],
+["NLP","Why subword tokenisation?","No out-of-vocabulary words, a manageable vocabulary, and it handles rare words, typos and morphology."],
+["NLP","Bi-encoder vs cross-encoder?","Bi-encoder: separate embeddings, precomputable, fast retrieval. Cross-encoder: the pair goes through together, more accurate, used for re-ranking the top-k."],
+["NLP","When TF-IDF + LR over BERT?","Small data, need for speed and explainability, or as a baseline. It's often surprisingly close."],
+["RecSys","Describe a production recommender architecture.","Candidate generation (two-tower ANN, co-visitation) → ranking (DCN/DLRM/GBDT on rich features) → re-ranking (diversity, business rules). Evaluate offline with Recall/NDCG, then an online A/B."],
+["RecSys","How do you handle cold start?","New users: popularity, context, onboarding, session-based models. New items: content features in the item tower, exploration slots."],
+["RecSys","What is NDCG?","A ranking metric that rewards relevant items at higher positions with a log₂ position discount, normalised by the ideal ordering."],
+["RecSys","Explicit vs implicit feedback?","Explicit: ratings, with clear negatives, but sparse. Implicit: clicks and purchases, abundant, but missing ≠ negative, so use ranking losses and negative sampling."],
+["TimeSeries","Why not random K-fold for time series?","It leaks the future into training. Use walk-forward (expanding or sliding) splits."],
+["TimeSeries","Local vs global forecasting models?","Local: one model per series. Global: one model across all series, which shares patterns and handles new series. DL forecasters and LightGBM are global."],
+["TimeSeries","What is quantile (pinball) loss used for?","Training models to predict percentiles (P10/P50/P90) for uncertainty, e.g. safety stock or ATM cash at P90."],
+["Anomaly","How do autoencoders detect anomalies?","Train on normal data only. Anomalies reconstruct poorly, so high reconstruction error is flagged."],
+["Anomaly","What's a GNN and why use it for fraud?","Message passing aggregates neighbour information, so an account's representation reflects its connections (shared devices, money flows). This catches rings that per-row models miss."],
+["Anomaly","GCN vs GraphSAGE?","GCN: transductive, full-graph normalised averaging. GraphSAGE: samples neighbours and learns an aggregation function, so it's inductive (can embed new nodes) and scalable."],
+["GenAI","GAN vs VAE vs diffusion?","GAN: adversarial, sharp outputs, unstable, mode collapse. VAE: stable, smooth latent space, blurry outputs. Diffusion: iterative denoising, best quality, slower sampling."],
+["GenAI","RAG vs fine-tuning?","RAG for knowledge (fresh, citeable facts). Fine-tuning for behaviour (style, format, domain tasks, cheaper smaller models)."],
+["GenAI","What is LoRA?","Freeze the base weights and learn a low-rank update ΔW = BA for chosen matrices. Under 1% of the parameters are trainable, adapters are small, and there's no extra latency once merged. QLoRA adds a 4-bit base model."],
+["GenAI","How do you evaluate an LLM application?","A golden set with references, task metrics where possible, LLM-as-judge with a rubric calibrated against humans, retrieval metrics for RAG, and cost/latency/safety plus online feedback."],
+["GenAI","What does temperature do?","It divides the logits before the softmax. Low values make output sharp and deterministic; high values make it flatter and more random."],
+["Production","What is train/serve skew?","Features computed differently in training and serving, which degrades live performance. Fix with a feature store or shared code, and by logging served features."],
+["Production","Data drift vs concept drift?","Data drift: P(X) changes. Concept drift: P(y|X) changes. Monitor PSI and score distributions, then performance once labels arrive."],
+["Production","How do you speed up inference?","Quantisation, distillation, pruning, ONNX/TensorRT, batching, caching embeddings."],
+["Production","Why calibrate a model?","So predicted probabilities match observed frequencies, which matters for thresholds, expected-loss calculations and bidding. Use temperature scaling or isotonic regression."],
+["Production","How do you explain a deep model to a regulator?","SHAP or Integrated Gradients for reason codes, global importance, model documentation, fairness tests, and often a hybrid or simpler challenger model for comparison."],
+];
+const store=DLP_STORE;let known=store.get('dlp-known',{});
+const tags=['All',...new Set(Q.map(q=>q[0]))];let tag='All',deck=[],idx=0;
+const $=id=>document.getElementById(id);
+tags.forEach(t=>{const b=document.createElement('button');b.textContent=t;b.onclick=()=>{tag=t;build();};$('ff').appendChild(b);});
+function build(){[...$('ff').children].forEach(b=>b.classList.toggle('on',b.textContent===tag));
+  deck=Q.map((q,i)=>i).filter(i=>tag==='All'||Q[i][0]===tag);
+  deck.sort((a,b)=>(known[a]?1:0)-(known[b]?1:0)||Math.random()-.5);idx=0;show();}
+function show(){const i=deck[idx%deck.length];const [t,q,a]=Q[i];$('card').classList.remove('show');
+  $('ftag').textContent=t;$('fq').textContent=q;$('fa').textContent=a;$('reveal').style.display='';$('know').style.display='none';$('again').style.display='none';
+  const k=deck.filter(j=>known[j]).length;$('fstat').textContent=`card ${idx%deck.length+1}/${deck.length} · ${k} known in this set`;}
+function reveal(){$('card').classList.add('show');$('reveal').style.display='none';$('know').style.display='';$('again').style.display='';}
+$('reveal').onclick=reveal;
+$('know').onclick=()=>{known[deck[idx%deck.length]]=1;store.set('dlp-known',known);idx++;show();};
+$('again').onclick=()=>{delete known[deck[idx%deck.length]];store.set('dlp-known',known);idx++;show();};
+document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;if(e.code==='Space'){e.preventDefault();$('card').classList.contains('show')?$('know').click():reveal();}});
+function list(){const s=$('search').value.toLowerCase();
+  $('list').innerHTML=Q.filter(q=>!s||(q[1]+q[2]+q[0]).toLowerCase().includes(s)).map(([t,q,a])=>`<details class="qa"><summary>${q} <span class="pill" style="margin-left:auto">${t}</span></summary><div class="ans"><p>${a}</p></div></details>`).join('');}
+$('search').addEventListener('input',list);build();list();
+})();
+</script>
+</body>
+</html>

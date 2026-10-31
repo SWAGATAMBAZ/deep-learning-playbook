@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>03 · Deep learning on tabular data · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="tabular">
+<main>
+  <div class="eyebrow">Lesson 03 · Week 3 · Banks, fintech, insurance</div>
+  <h1>Deep learning on tabular data</h1>
+  <p class="lede">Most data at banks and fintechs lives in tables: customers, transactions, loans. The honest truth interviewers want to hear is that <b>gradient-boosted trees are still the default</b>, and deep learning earns its place only in specific situations.</p>
+  <div class="toc"><a href="#why">Why trees win</a><a href="#when">When DL wins</a><a href="#embed">Entity embeddings</a><a href="#arch">Architectures</a><a href="#prep">Preprocessing</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="why">Why trees usually beat neural nets on tables</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Tabular features are a mixed bag: age, income, merchant category, "days since last login". Each column means something different, and the rules are often sharp ("if utilisation &gt; 90% then risk jumps"). Trees are built to make exactly those sharp, axis-aligned cuts. Neural networks prefer smooth functions and treat every input the same way, so they need more data and tuning to match trees.</p></div>
+  <ul>
+    <li>Trees are <b>robust to uninformative features</b> and to feature scale. MLPs get distracted by noise columns.</li>
+    <li>Target functions on tables are often <b>irregular or step-like</b>, and NNs are biased toward smooth solutions.</li>
+    <li>XGBoost, LightGBM and CatBoost handle <b>missing values and categoricals</b> natively and train in minutes on a CPU.</li>
+  </ul>
+
+  <h2 id="when">When deep learning <i>does</i> win on tabular data</h2>
+  <div class="widget">
+    <div class="widget-title">Should I use deep learning here?</div>
+    <div class="widget-sub">Tick what's true for your problem.</div>
+    <div id="chk" style="display:grid;gap:8px"></div>
+    <div class="readout" id="verdict" style="font-family:var(--sans)"></div>
+  </div>
+
+  <h2 id="embed">Entity embeddings: the key DL trick for tables</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>One-hot encoding 50,000 merchant IDs gives 50,000 sparse columns that know nothing about each other. An <b>embedding</b> gives each merchant a small learned vector, say 16 numbers, so merchants that behave alike (two grocery chains) end up close together. The model learns this map while it trains, and you can reuse the vectors in other models, including XGBoost.</p></div>
+  <div class="callout math"><div class="tag">📐 What it really is</div><p>An embedding layer is a lookup table, a matrix E of shape (n_categories × d). <code>E[merchant_id]</code> is mathematically identical to one-hot × E, just much faster. A rule of thumb for d is <b>min(50, round(1.6 · n<sup>0.56</sup>))</b> (the fastai heuristic).</p></div>
+  <div class="callout interview"><div class="tag">🎯 Interview point</div><p>"How do you handle a categorical with 1M levels?" Use an embedding, or hash it into buckets and then embed, or use target encoding with out-of-fold means for GBDTs. Mention an "unknown" index for unseen categories at inference time (the cold start problem).</p></div>
+
+  <h2 id="arch">Architectures worth knowing</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Model</th><th>Intuition</th><th>Where it's used</th></tr>
+    <tr><td><b>MLP + embeddings</b></td><td>Embed the categoricals, concatenate with the scaled numericals, feed through 2–4 dense layers</td><td>Strong simple baseline; credit risk, propensity</td></tr>
+    <tr><td><b>Wide &amp; Deep</b> (Google)</td><td>Wide linear part <b>memorises</b> specific feature crosses, deep part <b>generalises</b> via embeddings</td><td>App/product recommendations, CTR</td></tr>
+    <tr><td><b>DeepFM / DCN-v2</b></td><td>Learn feature interactions automatically (factorisation machines / explicit cross layers)</td><td>Ad click-through and conversion prediction</td></tr>
+    <tr><td><b>TabNet</b></td><td>Sequential <b>attention</b> picks which features to look at at each step, giving built-in feature-importance masks</td><td>Interpretable risk and fraud models</td></tr>
+    <tr><td><b>FT-Transformer</b></td><td>Turns every feature into a token, then self-attention learns how features interact</td><td>Large fraud datasets; often the strongest DL baseline for tables</td></tr>
+    <tr><td><b>TabPFN</b></td><td>A transformer pre-trained on millions of synthetic tables that predicts in one forward pass, with no training</td><td>Small datasets (up to ~10k rows); quick strong baselines</td></tr>
+    <tr><td><b>Sequence models over transactions</b></td><td>Treat a customer's transaction history as a sequence (GRU/Transformer)</td><td>Fraud, credit scoring from raw transactions, churn</td></tr>
+  </table></div>
+  <div class="callout win"><div class="tag">✅ What actually works in industry</div><p>A <b>hybrid</b>: train a sequence model or autoencoder on raw transactions, then feed its <b>embeddings as features into a GBDT</b>. Or ensemble a GBDT with an MLP/FT-Transformer. Their errors are fairly uncorrelated, so blending them usually adds a few points of AUC.</p></div>
+
+  <h2 id="prep">Preprocessing checklist for tabular NNs</h2>
+  <ul>
+    <li><b>Scale numericals</b>: standardise, or use QuantileTransformer/log for skewed amounts. Trees don't care about scale; NNs care a lot.</li>
+    <li><b>Missing values</b>: impute and add an "is_missing" flag column.</li>
+    <li><b>Categoricals</b>: integer-encode, then embed. Reserve index 0 for unknown/rare values.</li>
+    <li><b>Split by time</b> for anything behavioural, to avoid leakage.</li>
+    <li>Fit scalers on <b>train only</b>.</li>
+  </ul>
+
+  <h2 id="code">Code: MLP with entity embeddings</h2>
+  <script type="text/plain" class="snippet" data-title="pytorch — tabular model for default / fraud prediction">
+    import torch, torch.nn as nn
+
+    class TabularNet(nn.Module):
+        def __init__(self, cat_cardinalities, n_num, hidden=(256, 128), p=0.2):
+            super().__init__()
+            # one embedding table per categorical column (+1 for "unknown")
+            self.embs = nn.ModuleList([
+                nn.Embedding(n + 1, min(50, round(1.6 * n ** 0.56)))
+                for n in cat_cardinalities
+            ])
+            emb_dim = sum(e.embedding_dim for e in self.embs)
+            layers, d = [], emb_dim + n_num
+            for h in hidden:
+                layers += [nn.Linear(d, h), nn.BatchNorm1d(h), nn.ReLU(), nn.Dropout(p)]
+                d = h
+            self.mlp = nn.Sequential(*layers, nn.Linear(d, 1))   # 1 logit
+
+        def forward(self, x_cat, x_num):
+            e = [emb(x_cat[:, i]) for i, emb in enumerate(self.embs)]
+            x = torch.cat(e + [x_num], dim=1)
+            return self.mlp(x).squeeze(1)
+
+    model = TabularNet(cat_cardinalities=[5000, 30, 12], n_num=20)
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([50.0]))   # imbalance
+    # after training: model.embs[0].weight -> merchant embeddings to reuse in XGBoost
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Your manager wants a neural net for credit default. You have 200k rows and 60 features. What do you say?</summary><div class="ans"><p>Start with a tuned LightGBM/XGBoost baseline. It will probably be as good or better, it's faster, and it's easier to explain to model-risk and regulators (SHAP, monotonic constraints, adverse-action reasons). Try an MLP/FT-Transformer only if there's a signal trees can't use (raw transaction sequences, text, very high-cardinality IDs), and keep it only if it beats the baseline on out-of-time validation by enough to justify the extra complexity.</p></div></details>
+  <details class="qa"><summary>What are embeddings and why are they better than one-hot?</summary><div class="ans"><p>They're dense, low-dimensional learned vectors per category. Compared with one-hot: far fewer parameters, they capture similarity between categories, they generalise to rare categories by sharing structure, and they're reusable as features elsewhere.</p></div></details>
+  <details class="qa"><summary>How does TabNet provide interpretability?</summary><div class="ans"><p>At each decision step, an attentive transformer produces a sparse mask (via sparsemax) over the input features. Aggregating the masks gives per-row (local) and global feature importances, so you can see which features the model attended to for a specific prediction.</p></div></details>
+  <details class="qa"><summary>Why must you scale features for neural networks but not for trees?</summary><div class="ans"><p>Trees split on thresholds, so monotonic transforms don't change them. NNs compute weighted sums and gradients. Unscaled features (amount in lakhs next to a 0/1 flag) create badly conditioned loss surfaces, which means slow, unstable training and saturated activations.</p></div></details>
+  <details class="qa"><summary>How do you combine a GBDT and a neural net?</summary><div class="ans"><p>(1) Blend: average the calibrated probabilities, or stack with a logistic-regression meta-model. (2) Feature hand-off: feed NN embeddings (merchant vectors, sequence encodings) into the GBDT. (3) Use GBDT leaf indices as categorical inputs to the NN (the Facebook GBDT+LR idea).</p></div></details>
+</main>
+<script>
+(function(){
+  const items=[
+    ['More than ~1M rows',1],['High-cardinality IDs (merchant, product, user, device)',2],['Raw sequences/events per entity (transactions, clicks)',3],
+    ['Other modalities alongside the table (text, images)',3],['Need embeddings to reuse in other models',2],['Lots of unlabelled data for pretraining',2],
+    ['Strict regulator explainability (credit decision)',-3],['Under ~50k rows',-3],['Must run on CPU in under 5 ms',-1],['Mostly hand-engineered aggregate features',-2]];
+  const box=document.getElementById('chk');
+  items.forEach(([t,s],i)=>{const l=document.createElement('label');l.style.cssText='display:flex;gap:10px;align-items:center;font-size:15px;cursor:pointer';l.innerHTML=`<input type="checkbox" data-s="${s}"> ${t}`;box.appendChild(l);});
+  function upd(){let s=0;box.querySelectorAll('input:checked').forEach(c=>s+=+c.dataset.s);
+    const v=document.getElementById('verdict');
+    v.innerHTML=s>=4?`<b style="color:var(--green)">Score ${s}: deep learning is worth trying.</b> Still benchmark against LightGBM, and consider the hybrid (NN embeddings into GBDT).`:
+      s>=1?`<b style="color:var(--amber)">Score ${s}: borderline.</b> Use GBDT as the primary model; try MLP+embeddings or FT-Transformer as an ensemble member.`:
+      `<b style="color:var(--coral)">Score ${s}: stick with gradient boosting.</b> XGBoost / LightGBM / CatBoost, plus SHAP for explanations.`;}
+  box.addEventListener('change',upd);upd();
+})();
+</script>
+</body>
+</html>

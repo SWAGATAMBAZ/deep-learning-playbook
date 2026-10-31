@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>02 · Training & improving models · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="training">
+<main>
+  <div class="eyebrow">Lesson 02 · Week 2 · Most asked in interviews</div>
+  <h1>Training &amp; improving model performance</h1>
+  <p class="lede">Knowing the architectures is the easy part. What interviewers really probe is whether you can <b>make a model train and generalise</b>: pick the learning rate, spot overfitting, handle imbalance, and debug a flat loss curve.</p>
+  <div class="toc"><a href="#gdviz">Optimizers</a><a href="#lr">Learning rate</a><a href="#init">Initialisation</a><a href="#norm">Normalisation</a><a href="#reg">Regularisation</a><a href="#diag">Diagnose curves</a><a href="#imb">Imbalance</a><a href="#hp">Tuning</a><a href="#playbook">Improvement playbook</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="gdviz">Optimizers: smarter ways to walk downhill</h2>
+  <div class="widget">
+    <div class="widget-title">Gradient descent visualiser</div>
+    <div class="widget-sub">A bumpy 1-D loss surface. Try a learning rate of 1.1 with SGD (it diverges), then Momentum (it rolls past the small dip), then Adam. Press <b>Run</b>.</div>
+    <div class="controls">
+      <div class="control"><label>learning rate η <b id="lrv"></b></label><input type="range" id="lr" min="0.01" max="1.2" step="0.01" value="0.15"></div>
+      <div class="control"><label>start position <b id="x0v"></b></label><input type="range" id="x0" min="-3.5" max="3.5" step="0.1" value="-3"></div>
+      <div class="control"><label>optimizer</label><select id="opt"><option value="sgd">SGD</option><option value="mom">SGD + Momentum (β=0.9)</option><option value="adam">Adam</option></select></div>
+      <div class="control" style="align-self:end"><button class="btn primary" id="run">▶ Run 40 steps</button></div>
+    </div>
+    <canvas id="gc"></canvas>
+    <div class="readout" id="gout">Press Run.</div>
+  </div>
+  <div class="table-wrap"><table>
+    <tr><th>Optimizer</th><th>Intuition</th><th>When</th></tr>
+    <tr><td><b>SGD</b></td><td>Step straight down the slope</td><td>Rarely alone</td></tr>
+    <tr><td><b>SGD + Momentum</b></td><td>A heavy ball. Remembers past direction, smooths zig-zags, rolls through small bumps</td><td>CNNs (ResNet training); often generalises slightly better than Adam</td></tr>
+    <tr><td><b>RMSProp</b></td><td>Gives each weight its own step size: shrinks steps on weights with big, noisy gradients</td><td>RNNs (historically)</td></tr>
+    <tr><td><b>Adam</b></td><td>Momentum + RMSProp + bias correction</td><td>Default. Works out-of-the-box at lr ≈ 1e-3</td></tr>
+    <tr><td><b>AdamW</b></td><td>Adam with weight decay applied <i>correctly</i> (decoupled from the gradient)</td><td>Transformers, fine-tuning, and most modern work. <b>Use this by default.</b></td></tr>
+  </table></div>
+  <div class="callout math"><div class="tag">📐 Adam in three lines</div>
+    <div class="formula">m ← β₁m + (1−β₁)g &nbsp;&nbsp; v ← β₂v + (1−β₂)g² &nbsp;&nbsp; w ← w − η · m̂ / (√v̂ + ε)</div>
+    <p><b>m</b> = running average of gradients (direction, i.e. momentum). <b>v</b> = running average of squared gradients (how noisy or large a weight's gradients are). Dividing by √v gives rarely-updated weights bigger steps, which is great for sparse features like embeddings. Defaults: β₁=0.9, β₂=0.999.</p>
+  </div>
+
+  <h2 id="lr">Learning rate: the single most important hyperparameter</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>If you can tune only one thing, tune the learning rate. Too high and the loss explodes or goes NaN. Too low and the loss decreases painfully slowly and gets stuck. The usual trick is to start with a short <b>warm-up</b> (small steps while the weights are random), go big, then <b>decay</b> to fine steps near the end.</p></div>
+  <ul>
+    <li><b>LR range test</b>: increase the LR exponentially over one epoch, plot loss against LR, and pick roughly 1/10 of the LR where the loss is lowest.</li>
+    <li><b>Schedules</b>: step decay, cosine annealing (the most common today), OneCycle, and linear warm-up then decay (the standard for transformers).</li>
+    <li><b>ReduceLROnPlateau</b>: cut the LR by 10× when validation loss stalls. A simple and robust choice.</li>
+    <li><b>Batch size link</b>: if you double the batch size, you can roughly scale the LR up too (the linear scaling rule, used with warm-up).</li>
+  </ul>
+  <script type="text/plain" class="snippet" data-title="schedulers">
+    opt = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.01)
+    # cosine with warm-up (transformers library helper)
+    from transformers import get_cosine_schedule_with_warmup
+    sched = get_cosine_schedule_with_warmup(opt, num_warmup_steps=500, num_training_steps=total_steps)
+    # or plain PyTorch
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=1e-3, total_steps=total_steps)
+    # call sched.step() after every opt.step()
+  </script>
+
+  <h2 id="init">Weight initialisation</h2>
+  <p>The goal is to keep the variance of activations (and gradients) roughly constant from layer to layer, so signals neither die nor explode.</p>
+  <div class="grid two">
+    <div class="card"><h4>Xavier / Glorot</h4><p>Var(w) = 2 / (fan_in + fan_out). For <b>tanh/sigmoid</b>.</p></div>
+    <div class="card"><h4>He / Kaiming</h4><p>Var(w) = 2 / fan_in. For <b>ReLU</b>; the 2 compensates for ReLU zeroing half the inputs. PyTorch's default for Linear/Conv layers is close to this.</p></div>
+  </div>
+
+  <h2 id="norm">Normalisation layers</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>As earlier layers learn, the inputs to later layers keep shifting in scale, so every layer is chasing a moving target. Normalisation re-centres and re-scales each layer's inputs so training is faster and more stable, and you can use a higher LR.</p></div>
+  <div class="table-wrap"><table>
+    <tr><th></th><th>BatchNorm</th><th>LayerNorm</th></tr>
+    <tr><td>Normalises over</td><td>The <b>batch</b> dimension, per feature</td><td>The <b>feature</b> dimension, per sample</td></tr>
+    <tr><td>Depends on batch size?</td><td>Yes. Breaks with tiny batches; behaves differently in train and eval</td><td>No</td></tr>
+    <tr><td>Used in</td><td>CNNs</td><td>Transformers, RNNs</td></tr>
+    <tr><td>Formula</td><td colspan="2" style="text-align:center">x̂ = (x − μ) / √(σ² + ε); &nbsp; y = γx̂ + β &nbsp;(γ, β are learned)</td></tr>
+  </table></div>
+  <div class="callout trap"><div class="tag">⚠️ Classic bug</div><p>Forgetting <code>model.eval()</code> at inference. BatchNorm then uses the current batch's statistics instead of the running averages, and dropout stays switched on. Predictions become noisy and change with batch composition.</p></div>
+
+  <h2 id="reg">Regularisation: stopping memorisation</h2>
+  <div class="grid">
+    <div class="card"><div class="kicker">01</div><h4>Dropout</h4><p>Randomly zero p% of neurons during training (p = 0.1–0.5). The network can't rely on any single neuron, so it works like averaging many thinner networks. Turned off at eval.</p></div>
+    <div class="card"><div class="kicker">02</div><h4>Weight decay (L2)</h4><p>Penalises large weights, so the model learns smoother functions. Use AdamW with wd = 0.01–0.1.</p></div>
+    <div class="card"><div class="kicker">03</div><h4>Early stopping</h4><p>Track validation loss, keep the best checkpoint, and stop after N epochs with no improvement.</p></div>
+    <div class="card"><div class="kicker">04</div><h4>Data augmentation</h4><p>Images: flip, crop, colour jitter, MixUp/CutMix. Text: back-translation, synonym swap. Tabular: noise, SMOTE (use carefully).</p></div>
+    <div class="card"><div class="kicker">05</div><h4>Label smoothing</h4><p>Train on 0.9/0.1 targets instead of 1/0. Stops over-confidence and improves calibration.</p></div>
+    <div class="card"><div class="kicker">06</div><h4>Smaller model / more data</h4><p>Still the most reliable fixes. Transfer learning counts as "more data".</p></div>
+  </div>
+
+  <h2 id="diag">Diagnose from the loss curves</h2>
+  <div class="widget">
+    <div class="widget-title">Loss-curve doctor</div>
+    <div class="widget-sub">Pick the curve shape you're seeing. You'll get the diagnosis and the fixes in priority order.</div>
+    <div class="seg" id="dseg"></div>
+    <canvas id="dc" style="margin-top:12px"></canvas>
+    <div id="dout" class="readout" style="font-family:var(--sans)"></div>
+  </div>
+
+  <h2 id="imb">Class imbalance (fraud, default, churn)</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>If 0.2% of transactions are fraud, a model that always says "not fraud" is 99.8% accurate and completely useless. You have to make the rare class matter more, and measure with metrics that notice the rare class.</p></div>
+  <ol>
+    <li><b>Metrics first</b>: PR-AUC, recall at a fixed precision, F1, and expected cost. Never just accuracy. ROC-AUC can look great even under heavy imbalance.</li>
+    <li><b>Weighted loss</b>: <code>BCEWithLogitsLoss(pos_weight=neg/pos)</code> or class weights in CE.</li>
+    <li><b>Focal loss</b>: down-weights easy examples so training focuses on hard ones: FL = −α(1−p)<sup>γ</sup> log p, with γ≈2.</li>
+    <li><b>Resampling</b>: undersample the majority class or oversample the minority (balanced batch sampler). Re-calibrate the probabilities afterwards.</li>
+    <li><b>Threshold tuning</b>: choose the decision threshold on validation data from business costs (e.g. the cost of a missed fraud vs. the cost of blocking a good customer).</li>
+  </ol>
+  <script type="text/plain" class="snippet" data-title="focal loss + weighted BCE">
+    import torch, torch.nn as nn, torch.nn.functional as F
+
+    pos_weight = torch.tensor([(y_train == 0).sum() / (y_train == 1).sum()])
+    weighted_bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    class FocalLoss(nn.Module):
+        def __init__(self, alpha=0.25, gamma=2.0):
+            super().__init__(); self.alpha, self.gamma = alpha, gamma
+        def forward(self, logits, y):
+            bce = F.binary_cross_entropy_with_logits(logits, y, reduction="none")
+            p_t = torch.exp(-bce)                          # prob of the true class
+            a_t = self.alpha * y + (1 - self.alpha) * (1 - y)
+            return (a_t * (1 - p_t) ** self.gamma * bce).mean()
+  </script>
+
+  <h2 id="hp">Hyperparameter tuning order</h2>
+  <p>Tune in this order. Each item matters more than the ones below it.</p>
+  <ol>
+    <li><b>Learning rate</b> (log scale: 1e-5 → 1e-1)</li>
+    <li>Batch size and number of epochs (with early stopping)</li>
+    <li>Model capacity: layers and width</li>
+    <li>Regularisation: dropout, weight decay</li>
+    <li>Optimizer betas, schedule details</li>
+  </ol>
+  <p>Use <b>random search</b> or <b>Bayesian optimisation</b> (Optuna), not grid search. Random search explores the important dimensions better.</p>
+  <script type="text/plain" class="snippet" data-title="optuna in 12 lines">
+    import optuna
+    def objective(trial):
+        lr      = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
+        dropout = trial.suggest_float("dropout", 0.0, 0.5)
+        hidden  = trial.suggest_categorical("hidden", [64, 128, 256])
+        model = build_model(hidden, dropout)
+        return train_and_eval(model, lr)        # return validation PR-AUC
+    study = optuna.create_study(direction="maximize",
+                                pruner=optuna.pruners.MedianPruner())  # kills bad trials early
+    study.optimize(objective, n_trials=50)
+    print(study.best_params)
+  </script>
+
+  <h2 id="playbook">The model-improvement playbook</h2>
+  <div class="callout win"><div class="tag">✅ Say this in interviews: "How would you improve your model?"</div>
+  <ol>
+    <li><b>Check the data before the model.</b> Label noise, leakage, train/serve skew, and whether the validation split mimics production (time-based split for anything temporal).</li>
+    <li><b>Overfit one batch.</b> If the model can't drive the loss to ~0 on 32 samples, it's a bug, not a modelling problem.</li>
+    <li><b>Establish a baseline</b> (GBDT / logistic regression / pretrained model) and compute the human or "Bayes" error if you can.</li>
+    <li><b>Read the bias/variance gap.</b> High train error means underfitting: bigger model, train longer, better features. Large train/val gap means overfitting: more data, augmentation, regularisation, smaller model.</li>
+    <li><b>Do error analysis.</b> Slice errors by segment (new customers, a merchant category, a device type). Fixing the worst slice beats tuning hyperparameters.</li>
+    <li><b>Use transfer learning or pretraining</b> for images and text, and self-supervised pretraining on unlabelled transactions.</li>
+    <li><b>Ensemble</b> a few seeds or architectures (often the DL model + GBDT), then <b>calibrate</b> and tune the threshold.</li>
+  </ol></div>
+
+  <h3>Debugging checklist (loss not decreasing / NaN)</h3>
+  <div class="grid two">
+    <div class="card"><h4>Loss is NaN or inf</h4><p>LR too high · log(0) in a custom loss · no input normalisation · exploding gradients, so add <code>clip_grad_norm_(params, 1.0)</code> · fp16 overflow, so use a GradScaler.</p></div>
+    <div class="card"><h4>Loss is flat</h4><p>LR too low or too high · forgot <code>zero_grad</code> · wrong loss/activation combination (softmax + CE) · labels shuffled separately from inputs · dead ReLUs · frozen layers.</p></div>
+    <div class="card"><h4>Val much worse than train</h4><p>Overfitting · distribution shift between splits · leakage in train only · forgot <code>model.eval()</code>.</p></div>
+    <div class="card"><h4>Val better than train</h4><p>Dropout and augmentation are only active in training (normal) · train loss is averaged over the epoch while val is measured at the end · val set is too easy.</p></div>
+  </div>
+  <script type="text/plain" class="snippet" data-title="a robust training step (AMP + clipping + early stopping)">
+    scaler = torch.cuda.amp.GradScaler()
+    best, patience, bad = float("inf"), 5, 0
+    for epoch in range(100):
+        model.train()
+        for xb, yb in train_loader:
+            opt.zero_grad(set_to_none=True)
+            with torch.autocast(device_type="cuda", dtype=torch.float16):   # mixed precision
+                loss = loss_fn(model(xb), yb)
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)          # tame exploding grads
+            scaler.step(opt); scaler.update(); sched.step()
+        val = evaluate(model, val_loader)
+        if val < best: best, bad = val, 0; torch.save(model.state_dict(), "best.pt")
+        else:
+            bad += 1
+            if bad >= patience: break                                         # early stopping
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Your validation loss starts increasing after epoch 5 while training loss keeps falling. What do you do?</summary><div class="ans"><p>That's overfitting. In order: early-stop at the best checkpoint, add regularisation (dropout, weight decay, augmentation), get more or cleaner data, reduce capacity, and use transfer learning. Also check the validation split mirrors production (e.g. time-based).</p></div></details>
+  <details class="qa"><summary>Adam vs SGD with momentum?</summary><div class="ans"><p>Adam adapts per-parameter step sizes, converges fast and needs little tuning, so it's the default, especially for transformers and sparse embeddings (use AdamW). Well-tuned SGD+momentum can generalise slightly better on vision tasks. In practice: AdamW first; try SGD for CNNs if you have the budget to tune it.</p></div></details>
+  <details class="qa"><summary>Why does AdamW exist if Adam already supports weight_decay?</summary><div class="ans"><p>In Adam, L2 decay is added to the gradient and then divided by √v, so heavily-updated weights get less regularisation, which isn't what you want. AdamW applies the decay directly to the weights, separately from the adaptive step, so it regularises uniformly. It gives better generalisation.</p></div></details>
+  <details class="qa"><summary>BatchNorm vs LayerNorm. Why do transformers use LayerNorm?</summary><div class="ans"><p>BatchNorm computes statistics across the batch, which is unstable with small or variable batches and variable-length sequences, and it behaves differently in training and inference. LayerNorm normalises each token's features independently, so it doesn't depend on the batch and behaves the same in training and inference.</p></div></details>
+  <details class="qa"><summary>How does dropout behave at train vs test time?</summary><div class="ans"><p>During training, each unit is zeroed with probability p and the survivors are scaled by 1/(1−p) ("inverted dropout"). At test time nothing is dropped and no scaling is needed because the expected activation already matches. It approximates averaging an ensemble of sub-networks.</p></div></details>
+  <details class="qa"><summary>What is gradient clipping and when do you need it?</summary><div class="ans"><p>Rescaling the gradient vector when its norm exceeds a threshold (e.g. 1.0). It prevents exploding gradients, which are common in RNNs, transformers and very deep nets. Clipping by norm keeps the direction; clipping by value doesn't.</p></div></details>
+  <details class="qa"><summary>How do you choose batch size?</summary><div class="ans"><p>As large as fits in GPU memory for throughput, within reason. Large batches give less noisy gradients and may generalise worse unless you scale the LR and use warm-up. Small batches add regularising noise but are slower. 32–256 is typical; use gradient accumulation to simulate larger batches.</p></div></details>
+  <details class="qa"><summary>Fraud is 0.1% of your data. Walk through your approach.</summary><div class="ans"><p>Use a time-based split. Choose metrics like PR-AUC or recall at a fixed false-positive rate, or expected cost. Start with a GBDT baseline. In the network, use a weighted BCE or focal loss, or balanced mini-batches. Calibrate the probabilities (Platt/isotonic) and pick the threshold from the cost matrix. Monitor drift because fraud patterns adapt.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const L=x=>0.3*x*x+0.6*Math.sin(3*x)+1.2, dL=x=>0.6*x+1.8*Math.cos(3*x);
+  let path=[],anim=null;
+  function draw(){
+    const {ctx,w,h,col}=DLP_canvas($('gc'),280);ctx.clearRect(0,0,w,h);
+    const X=x=>(x+4)/8*w, Y=v=>h-20-(v)/(6.5)*(h-40);
+    ctx.strokeStyle=col('--accent');ctx.lineWidth=2.5;ctx.beginPath();
+    for(let px=0;px<=w;px+=2){const x=px/w*8-4;px?ctx.lineTo(px,Y(L(x))):ctx.moveTo(px,Y(L(x)));}ctx.stroke();
+    ctx.strokeStyle='#e2554f';ctx.lineWidth=1.5;ctx.setLineDash([4,4]);ctx.beginPath();
+    path.forEach((x,i)=>{const cx=Math.max(-4,Math.min(4,x));i?ctx.lineTo(X(cx),Y(L(cx))):ctx.moveTo(X(cx),Y(L(cx)));});ctx.stroke();ctx.setLineDash([]);
+    path.forEach((x,i)=>{const cx=Math.max(-4,Math.min(4,x));ctx.beginPath();ctx.arc(X(cx),Y(L(cx)),i===path.length-1?7:3.5,0,7);ctx.fillStyle=i===path.length-1?'#e2554f':'rgba(226,85,79,.5)';ctx.fill();});
+  }
+  function run(){
+    clearInterval(anim);const lr=+$('lr').value,opt=$('opt').value;let x=+$('x0').value,m=0,v=0,t=0;path=[x];
+    anim=setInterval(()=>{t++;const g=dL(x);
+      if(opt==='sgd')x-=lr*g;
+      else if(opt==='mom'){m=0.9*m+g;x-=lr*0.1*m;}
+      else{m=0.9*m+0.1*g;v=0.999*v+0.001*g*g;const mh=m/(1-0.9**t),vh=v/(1-0.999**t);x-=lr*0.5*mh/(Math.sqrt(vh)+1e-8);}
+      path.push(x);draw();
+      const msg=Math.abs(x)>6?'💥 Diverged: the learning rate is too high for this curvature.':`step ${t} · w = ${x.toFixed(3)} · loss = ${L(Math.max(-4,Math.min(4,x))).toFixed(3)}`;
+      $('gout').textContent=msg;
+      if(t>=40||Math.abs(x)>6)clearInterval(anim);},70);
+  }
+  ['lr','x0'].forEach(id=>$(id).addEventListener('input',()=>{$('lrv').textContent=(+$('lr').value).toFixed(2);$('x0v').textContent=(+$('x0').value).toFixed(1);path=[+$('x0').value];draw();}));
+  $('run').onclick=run;$('lrv').textContent='0.15';$('x0v').textContent='-3.0';path=[-3];
+  // loss curve doctor
+  const D={
+    'Underfitting':{tr:e=>1.2-0.25*Math.log(e+1)*.6,va:e=>1.25-0.25*Math.log(e+1)*.6,txt:'<b>High bias.</b> Both losses are high and close together. Fixes: bigger model (more layers/width) → train longer → raise the LR or use a schedule → better features or inputs → reduce regularisation.'},
+    'Overfitting':{tr:e=>1.2*Math.exp(-e/6)+.05,va:e=>.75*Math.exp(-e/5)+.35+0.012*e,txt:'<b>High variance.</b> Train keeps falling while val turns up. Fixes: early stopping → more data / augmentation → dropout and weight decay → smaller model → transfer learning.'},
+    'Good fit':{tr:e=>1.2*Math.exp(-e/7)+.15,va:e=>1.2*Math.exp(-e/7)+.22,txt:'<b>Healthy.</b> There is a small, stable gap. Next steps: error analysis by segment, ensembling, calibration and threshold tuning.'},
+    'LR too high':{tr:e=>.9+0.25*Math.sin(e*1.7)+0.02*e,va:e=>1+0.3*Math.sin(e*1.5+1)+0.02*e,txt:'<b>Unstable or oscillating.</b> Fixes: lower the LR by 3–10×, add warm-up, clip gradients, check input scaling, and use a larger batch.'},
+    'LR too low':{tr:e=>1.3-0.008*e,va:e=>1.32-0.007*e,txt:'<b>Barely moving.</b> Fixes: raise the LR (run an LR range test), check gradients are flowing (no frozen layers or dead ReLUs), and check zero_grad/step are called.'},
+  };
+  let cur='Overfitting';
+  Object.keys(D).forEach(k=>{const b=document.createElement('button');b.textContent=k;b.onclick=()=>{cur=k;drawD();};$('dseg').appendChild(b);});
+  function drawD(){
+    [...$('dseg').children].forEach(b=>b.classList.toggle('on',b.textContent===cur));
+    const {ctx,w,h,col}=DLP_canvas($('dc'),220);ctx.clearRect(0,0,w,h);const d=D[cur];
+    const X=e=>30+e/40*(w-50),Y=v=>h-25-(v/1.6)*(h-40);
+    ctx.strokeStyle=col('--line');ctx.beginPath();ctx.moveTo(30,10);ctx.lineTo(30,h-25);ctx.lineTo(w-10,h-25);ctx.stroke();
+    [[d.tr,col('--accent'),'train'],[d.va,'#e2554f','validation']].forEach(([f,c,n],k)=>{ctx.strokeStyle=c;ctx.lineWidth=2.5;ctx.beginPath();for(let e=0;e<=40;e+=.5){e?ctx.lineTo(X(e),Y(f(e))):ctx.moveTo(X(e),Y(f(e)));}ctx.stroke();ctx.fillStyle=c;ctx.font='12px ui-sans-serif';ctx.fillText('— '+n,w-120,20+k*16);});
+    ctx.fillStyle=col('--muted');ctx.fillText('epochs →',w-70,h-8);ctx.fillText('loss',4,14);
+    $('dout').innerHTML=d.txt;
+  }
+  draw();drawD();window.addEventListener('resize',()=>{draw();drawD();});window.addEventListener('dlp-theme',()=>{draw();drawD();});
+})();
+</script>
+</body>
+</html>

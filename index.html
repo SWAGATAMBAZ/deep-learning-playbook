@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Deep Learning Playbook · Start here</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="index">
+<main>
+  <div class="hero">
+    <div>
+      <div class="eyebrow">Zero → interview-ready</div>
+      <h1>Deep learning, the parts a Data Scientist II actually needs.</h1>
+      <p class="lede">Every topic goes in four layers: a <b>plain-English</b> picture, the <b>small bit of maths</b> that makes it click, <b>PyTorch code</b> you can copy, and the <b>points interviewers ask about</b>. It skips anything you won't need at work or in an interview.</p>
+      <a class="btn primary" href="foundations.html">Start lesson 01 →</a>
+      <a class="btn" href="chooser.html" style="margin-left:8px">Jump to “which model when?”</a>
+    </div>
+    <svg viewBox="0 0 360 260" aria-label="A small neural network">
+      <defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#4338ca"/><stop offset="1" stop-color="#e2554f"/></linearGradient></defs>
+      <g stroke="url(#g)" stroke-opacity=".35" stroke-width="1.4" id="edges"></g>
+      <g id="nodes"></g>
+    </svg>
+  </div>
+
+  <h2>How to use this site</h2>
+  <div class="grid">
+    <div class="card"><span class="pill green">Layman</span><p>Start with the plain-English box. If you can explain it to a friend, you understand it.</p></div>
+    <div class="card"><span class="pill">Math</span><p>Only the equations interviewers expect you to write on a whiteboard. Nothing more.</p></div>
+    <div class="card"><span class="pill coral">Play</span><p>Every core page has a live widget. Drag the sliders until the behaviour makes sense.</p></div>
+    <div class="card"><span class="pill amber">Interview</span><p>The 🎯 boxes and the Q&amp;A at the bottom of each page. Say the answers out loud.</p></div>
+  </div>
+
+  <h2>The 8-week roadmap</h2>
+  <p>About 1–1.5 hours a day. Each step is ticked automatically when you mark its page as done. The order matters: everything after week 2 reuses the vocabulary from weeks 1–2.</p>
+  <div class="roadmap">
+    <div class="step" data-step="foundations"><div class="card"><div class="week">WEEK 1</div><h4><a href="foundations.html">Neural-net foundations</a></h4><p>Neuron → layers → activations → loss → gradient descent → backprop. Write a 2-layer net in PyTorch and know what every line does.</p></div></div>
+    <div class="step" data-step="training"><div class="card"><div class="week">WEEK 2</div><h4><a href="training.html">Training &amp; improving models</a></h4><p>Optimizers, learning rate, init, BatchNorm, dropout, early stopping, class imbalance, and a debugging checklist. <b>This is the most-asked area.</b></p></div></div>
+    <div class="step" data-step="tabular"><div class="card"><div class="week">WEEK 3</div><h4><a href="tabular.html">Deep learning on tabular data</a></h4><p>Why GBDTs usually still win, entity embeddings, Wide&amp;Deep, TabNet, FT-Transformer. This is the bread and butter of banks and fintech.</p></div></div>
+    <div class="step" data-step="cnn"><div class="card"><div class="week">WEEK 3</div><h4><a href="cnn.html">CNNs &amp; vision</a></h4><p>Convolution, pooling, ResNet skip connections, transfer learning. Used for KYC documents, product images and defect detection.</p></div></div>
+    <div class="step" data-step="rnn"><div class="card"><div class="week">WEEK 4</div><h4><a href="rnn.html">Sequences: RNN, LSTM, GRU</a></h4><p>Vanishing gradients and how gates fix them. Transaction sequences and clickstreams.</p></div></div>
+    <div class="step" data-step="transformers"><div class="card"><div class="week">WEEK 4–5</div><h4><a href="transformers.html">Attention &amp; Transformers</a></h4><p>Q/K/V, why we divide by √d, multi-head attention, positional encoding, BERT vs GPT. Expect at least one question on this in every loop.</p></div></div>
+    <div class="step" data-step="nlp"><div class="card"><div class="week">WEEK 5</div><h4><a href="nlp.html">Embeddings &amp; NLP</a></h4><p>Word2Vec → contextual embeddings, tokenization, fine-tuning BERT for complaints, intent and NER.</p></div></div>
+    <div class="step" data-step="recsys"><div class="card"><div class="week">WEEK 6</div><h4><a href="recsys.html">Recommender systems</a></h4><p>Matrix factorisation, two-tower retrieval, ranking models, sequential recommenders, NDCG. Central to e-commerce interviews.</p></div></div>
+    <div class="step" data-step="timeseries"><div class="card"><div class="week">WEEK 6</div><h4><a href="timeseries.html">Time-series forecasting</a></h4><p>LSTM, TCN, DeepAR, TFT, N-BEATS, PatchTST, foundation models, and walk-forward validation (no leakage).</p></div></div>
+    <div class="step" data-step="anomaly"><div class="card"><div class="week">WEEK 7</div><h4><a href="anomaly.html">Anomaly detection &amp; GNNs</a></h4><p>Autoencoders for fraud, graph neural nets for fraud rings and AML.</p></div></div>
+    <div class="step" data-step="genai"><div class="card"><div class="week">WEEK 7</div><h4><a href="genai.html">Generative AI &amp; LLMs</a></h4><p>VAE, GAN and diffusion in one page each; then LLMs, RAG, LoRA and evaluation. Now asked in most DS loops.</p></div></div>
+    <div class="step" data-step="industry"><div class="card"><div class="week">WEEK 8</div><h4><a href="industry.html">Industry playbook</a> + <a href="chooser.html">model chooser</a></h4><p>Fintech, banking, e-commerce, insurance, healthcare and more: the problem, the model, the metric and the trap for each.</p></div></div>
+    <div class="step" data-step="production"><div class="card"><div class="week">WEEK 8</div><h4><a href="production.html">Production &amp; explainability</a></h4><p>Serving, latency, drift monitoring, SHAP, fairness for lending. This is what separates a DS II answer from a DS I answer.</p></div></div>
+    <div class="step" data-step="interview"><div class="card"><div class="week">ONGOING</div><h4><a href="interview.html">Interview question bank</a></h4><p>Rapid-fire quiz mode. Do 15 questions a day from week 2 onward.</p></div></div>
+  </div>
+
+  <div class="callout interview"><div class="tag">🎯 What DS II interviews test</div>
+    <p>DS II loops rarely ask you to derive things from scratch. They test <b>judgement</b>: <i>Why this model over XGBoost? How did you handle imbalance? What would you check if validation loss went up? How would you serve it under 50 ms? How do you explain it to a regulator?</i> Every page ends with those trade-offs, so learn those, not the proofs.</p>
+  </div>
+
+  <h2>Setup (5 minutes)</h2>
+  <script type="text/plain" class="snippet" data-title="terminal">
+    # Python 3.10+; use a virtual env
+    pip install torch torchvision scikit-learn pandas numpy matplotlib
+    pip install transformers datasets peft          # for NLP / LLM lessons
+    # No GPU? Use Google Colab or Kaggle notebooks (free GPU) for the CNN/Transformer labs.
+  </script>
+  <script type="text/plain" class="snippet" data-title="the PyTorch training loop you'll reuse everywhere">
+    import torch, torch.nn as nn
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = MyModel().to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
+    loss_fn = nn.CrossEntropyLoss()
+
+    for epoch in range(EPOCHS):
+        model.train()                       # enables dropout / batchnorm updates
+        for xb, yb in train_loader:
+            xb, yb = xb.to(device), yb.to(device)
+            opt.zero_grad()                 # 1. clear old gradients
+            loss = loss_fn(model(xb), yb)   # 2. forward pass
+            loss.backward()                 # 3. backprop: compute gradients
+            opt.step()                      # 4. update weights
+
+        model.eval()                        # disables dropout, uses running BN stats
+        with torch.no_grad():               # no gradient tracking -> faster, less memory
+            val_loss = sum(loss_fn(model(x.to(device)), y.to(device)).item() for x, y in val_loader)
+        print(epoch, val_loss)
+  </script>
+</main>
+<script>
+(function(){
+  const layers=[3,5,5,2], W=360,H=260, xs=layers.map((_,i)=>40+i*(W-80)/(layers.length-1));
+  const pos=layers.map((n,i)=>Array.from({length:n},(_,j)=>[xs[i],H/2+(j-(n-1)/2)*42]));
+  const E=document.getElementById('edges'),N=document.getElementById('nodes');let e='',n='';
+  for(let i=0;i<pos.length-1;i++)for(const a of pos[i])for(const b of pos[i+1])e+=`<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`;
+  pos.flat().forEach((p,k)=>n+=`<circle cx="${p[0]}" cy="${p[1]}" r="11" fill="var(--panel)" stroke="${k<3?'#4338ca':k>12?'#e2554f':'#9a8fd9'}" stroke-width="3"><animate attributeName="r" values="11;13;11" dur="${2+(k%5)*.4}s" repeatCount="indefinite"/></circle>`);
+  E.innerHTML=e;N.innerHTML=n;
+})();
+</script>
+</body>
+</html>

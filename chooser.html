@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>13 · Which model when? · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+<style>
+.wiz-q{font-family:var(--serif);font-size:22px;margin:6px 0 14px}
+.wiz-opts{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.wiz-opts button{text-align:left;padding:14px 16px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit;font-size:15px;cursor:pointer;transition:.15s}
+.wiz-opts button:hover{border-color:var(--accent);transform:translateY(-1px)}
+.crumbs{font-size:13px;color:var(--muted);margin-bottom:6px}
+.result h3{margin-top:4px}
+</style>
+</head>
+<body data-page="chooser">
+<main>
+  <div class="eyebrow">Lesson 13 · Week 8 · Judgement</div>
+  <h1>Which model, when?</h1>
+  <p class="lede">The question behind every DS II interview: <i>why did you choose that?</i> Use the wizard to practise the reasoning, then memorise the cheat sheets below.</p>
+
+  <div class="widget">
+    <div class="widget-title">Model chooser</div>
+    <div class="crumbs" id="crumbs"></div>
+    <div id="wiz"></div>
+  </div>
+
+  <h2>Cheat sheet: data type → model</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Data</th><th>Baseline</th><th>Strong DL choice</th><th>Notes</th></tr>
+    <tr><td>Tabular</td><td>LightGBM / XGBoost</td><td>MLP + embeddings, FT-Transformer, TabPFN (small data)</td><td>Hybrid / ensemble usually wins</td></tr>
+    <tr><td>Images</td><td>Pretrained CNN as feature extractor + LR</td><td>Fine-tuned ConvNeXt / EfficientNet / ViT</td><td>YOLO for detection, U-Net for segmentation</td></tr>
+    <tr><td>Text</td><td>TF-IDF + LR</td><td>Fine-tuned BERT/DeBERTa; LLM zero-shot</td><td>Sentence embeddings for search</td></tr>
+    <tr><td>Event sequences</td><td>GBDT on aggregates</td><td>GRU / transformer over events</td><td>Encode time deltas</td></tr>
+    <tr><td>Time series (many)</td><td>Seasonal naive, LightGBM with lags</td><td>N-HiTS, TFT, DeepAR, PatchTST, foundation models</td><td>Walk-forward CV</td></tr>
+    <tr><td>User–item</td><td>Popularity, item-item co-occurrence</td><td>Two-tower + DCN/DLRM ranker; SASRec</td><td>Funnel architecture</td></tr>
+    <tr><td>Graph</td><td>Graph features (degree, PageRank) into GBDT</td><td>GraphSAGE / GAT / heterogeneous GNN</td><td>Inductive for new nodes</td></tr>
+    <tr><td>No labels</td><td>Isolation Forest, clustering</td><td>Autoencoder, contrastive pretraining</td><td>Build labels via feedback</td></tr>
+    <tr><td>Generate content</td><td>Templates</td><td>LLM (+RAG / LoRA), diffusion</td><td>Eval set first</td></tr>
+  </table></div>
+
+  <h2>Cheat sheet: output → last layer → loss → metric</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Problem</th><th>Last layer</th><th>Loss</th><th>Metric</th></tr>
+    <tr><td>Binary classification</td><td>1 unit (logit)</td><td>BCEWithLogits (+pos_weight / focal)</td><td>PR-AUC, ROC-AUC, F1, recall@FPR</td></tr>
+    <tr><td>Multi-class (one label)</td><td>K units (logits)</td><td>CrossEntropy (+label smoothing)</td><td>Accuracy, macro-F1</td></tr>
+    <tr><td>Multi-label</td><td>K units</td><td>BCEWithLogits per label</td><td>Micro/macro-F1, mAP</td></tr>
+    <tr><td>Regression</td><td>1 unit, linear</td><td>MSE / MAE / Huber</td><td>RMSE, MAE, WAPE</td></tr>
+    <tr><td>Count data</td><td>1 unit + exp/softplus</td><td>Poisson / Tweedie</td><td>Deviance</td></tr>
+    <tr><td>Quantiles</td><td>Q units</td><td>Pinball</td><td>Coverage, pinball</td></tr>
+    <tr><td>Ranking / retrieval</td><td>Embedding</td><td>Sampled softmax / BPR / InfoNCE</td><td>Recall@K, NDCG</td></tr>
+  </table></div>
+
+  <h2>Cheat sheet: default hyperparameters that usually work</h2>
+  <div class="grid">
+    <div class="card"><h4>Optimizer</h4><p>AdamW, lr 1e-3 (from scratch) / 2e-5 to 5e-5 (fine-tuning transformers), weight decay 0.01</p></div>
+    <div class="card"><h4>Schedule</h4><p>Linear warm-up for 5–10% of steps → cosine decay</p></div>
+    <div class="card"><h4>Batch</h4><p>32–256; gradient accumulation if memory is limited</p></div>
+    <div class="card"><h4>Regularisation</h4><p>Dropout 0.1–0.3, early stopping with patience 3–10</p></div>
+    <div class="card"><h4>Activation / norm</h4><p>ReLU/GELU; BatchNorm for CNN/MLP, LayerNorm for transformers</p></div>
+    <div class="card"><h4>Precision</h4><p>Mixed precision (bf16/fp16) and gradient clipping at 1.0</p></div>
+  </div>
+</main>
+<script>
+(function(){
+  const T={
+    q:"What does your input data look like?",o:[
+      ["📊 Rows & columns (tabular)",{q:"How big is it, and is there extra signal?",o:[
+        ["Under ~10k rows",{r:"TabPFN or LightGBM/CatBoost",why:"Tiny data: trees or a pretrained tabular foundation model. DL from scratch will overfit.",next:"tabular.html"}],
+        ["Big, mostly engineered aggregates",{r:"LightGBM / XGBoost (+SHAP)",why:"Trees are the state of the art on engineered tabular features: fast, robust, explainable. Optionally ensemble with an MLP.",next:"tabular.html"}],
+        ["Big + high-cardinality IDs",{r:"MLP with entity embeddings or FT-Transformer, ensembled with GBDT",why:"Embeddings share statistical strength across millions of categories, something one-hot/GBDT handles poorly.",next:"tabular.html"}],
+        ["Big + raw event history per customer",{r:"GRU / transformer over events → embeddings → GBDT",why:"Sequence models learn behaviour patterns that hand-made aggregates miss; the GBDT keeps production robustness.",next:"rnn.html"}]]}],
+      ["🖼️ Images / scans",{q:"What do you need to output?",o:[
+        ["A label per image",{r:"Fine-tune a pretrained ConvNeXt / EfficientNet / ViT",why:"Transfer learning works with a few thousand images. Freeze, then unfreeze with discriminative LRs.",next:"cnn.html"}],
+        ["Boxes around objects",{r:"YOLO (real-time) or Faster R-CNN (accuracy)",why:"One-stage vs two-stage detector trade-off between speed and accuracy. Metric: mAP@IoU.",next:"cnn.html"}],
+        ["Pixel masks",{r:"U-Net / Mask R-CNN",why:"Encoder-decoder with skip connections preserves spatial detail.",next:"cnn.html"}],
+        ["Text from documents/forms",{r:"OCR + LayoutLM / Donut, or a multimodal LLM",why:"Layout-aware models use position and visual cues, not just text.",next:"cnn.html"}]]}],
+      ["💬 Text",{q:"How many labelled examples do you have?",o:[
+        ["Few / none",{r:"LLM zero/few-shot (+ distil later)",why:"No labelled data needed. Use LLM labels to train a cheap encoder once volume grows.",next:"genai.html"}],
+        ["Thousands+",{r:"Fine-tuned DistilBERT / DeBERTa",why:"Best accuracy per rupee and per millisecond at high volume. TF-IDF+LR as the baseline.",next:"nlp.html"}],
+        ["Need search / Q&A over docs",{r:"Embeddings + vector DB + re-ranker (+ LLM = RAG)",why:"Bi-encoder for recall, cross-encoder for precision, LLM for the grounded answer.",next:"genai.html"}]]}],
+      ["⏱️ Time series",{q:"How many series?",o:[
+        ["One or a few",{r:"ETS / ARIMA / Prophet (+ seasonal naive)",why:"Not enough data for DL to beat classical methods, and these are explainable.",next:"timeseries.html"}],
+        ["Hundreds to millions, with covariates",{r:"LightGBM global model, then TFT / N-HiTS / DeepAR",why:"Global models share patterns across series. TFT handles known-future covariates and gives quantiles.",next:"timeseries.html"}],
+        ["Need a fast decent baseline",{r:"Chronos / TimesFM zero-shot",why:"Pretrained time-series foundation models forecast without training.",next:"timeseries.html"}]]}],
+      ["🛍️ Users × items",{q:"Which stage are you building?",o:[
+        ["Candidate retrieval",{r:"Two-tower model + ANN (FAISS)",why:"Precomputed item vectors make search over millions possible in milliseconds.",next:"recsys.html"}],
+        ["Ranking",{r:"DCN-v2 / DLRM / DIN (or LightGBM)",why:"Rich cross features and attention over history for precise P(click/buy).",next:"recsys.html"}],
+        ["Anonymous sessions",{r:"SASRec / GRU4Rec",why:"Next-item prediction from the current session's click sequence.",next:"recsys.html"}]]}],
+      ["🕸️ Relationships / networks",{r:"GraphSAGE / GAT (or graph features into GBDT)",why:"Message passing propagates risk through connections. Inductive models handle new accounts.",next:"anomaly.html"}],
+      ["❓ No labels, find weird stuff",{r:"Isolation Forest baseline → autoencoder",why:"Learn 'normal' and flag high reconstruction error. Convert analyst feedback into labels over time.",next:"anomaly.html"}],
+      ["✍️ Generate text/images",{r:"LLM with prompting → RAG → LoRA; diffusion for images",why:"RAG for knowledge, fine-tuning for behaviour. Build an eval set first.",next:"genai.html"}],
+    ]};
+  const wiz=document.getElementById('wiz'),cr=document.getElementById('crumbs');let path=[];
+  function node(){let n=T;path.forEach(i=>n=n.o[i][1]);return n;}
+  function render(){
+    const n=node();let crumb=[],m=T;path.forEach(i=>{crumb.push(m.o[i][0]);m=m.o[i][1];});
+    cr.innerHTML=crumb.length?crumb.join(' → ')+' · <a href="#" id="back">← back</a> · <a href="#" id="restart">restart</a>':'Step 1';
+    if(n.r){wiz.innerHTML=`<div class="result"><div class="eyebrow">Recommendation</div><h3>${n.r}</h3><p>${n.why}</p><p><b>Always:</b> compare against the simple baseline, validate the way production works, and pick the metric from the business cost.</p><a class="btn primary" href="${n.next}">Go to the lesson →</a></div>`;}
+    else{wiz.innerHTML=`<div class="wiz-q">${n.q}</div><div class="wiz-opts">${n.o.map((o,i)=>`<button data-i="${i}">${o[0]}</button>`).join('')}</div>`;
+      wiz.querySelectorAll('button').forEach(b=>b.onclick=()=>{path.push(+b.dataset.i);render();});}
+    const bk=document.getElementById('back');if(bk)bk.onclick=e=>{e.preventDefault();path.pop();render();};
+    const rs=document.getElementById('restart');if(rs)rs.onclick=e=>{e.preventDefault();path=[];render();};
+  }
+  render();
+})();
+</script>
+</body>
+</html>
