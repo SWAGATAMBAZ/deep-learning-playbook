@@ -12,7 +12,7 @@
   <h1>GRU in depth (and LSTM vs GRU)</h1>
   <p class="lede">The GRU (Cho et al., 2014) keeps the LSTM's core trick, gated additive memory, but folds it into <b>one state and two gates</b>. It has about 25% fewer parameters than an LSTM of the same size, trains faster, and performs on par in most real-world tasks. That's why it's often the first recurrent model to try.</p>
   <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Three-part series</div><p><a href="rnn.html">I. RNN</a> → <a href="lstm.html">II. LSTM</a> → <b>III. GRU</b> (this page).</p></div>
-  <div class="toc"><a href="#intuition">Intuition</a><a href="#eq">Equations</a><a href="#sim">GRU simulator</a><a href="#why">Why it works</a><a href="#vs">LSTM vs GRU</a><a href="#params">Parameters</a><a href="#torch">PyTorch API</a><a href="#variants">Variants</a><a href="#hp">Hyperparameters</a><a href="#improve">Improving performance</a><a href="#industry">Industry uses</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#intuition">Intuition</a><a href="#eq">Equations</a><a href="#sim">GRU simulator</a><a href="#why">Why it works</a><a href="#vs">LSTM vs GRU</a><a href="#params">Parameters</a><a href="#torch">PyTorch API</a><a href="#variants">Variants</a><a href="#hp">Hyperparameters</a><a href="#improve">Improving performance</a><a href="#industry">Industry uses</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="intuition">Intuition: a dimmer switch between old and new</h2>
   <div class="callout layman"><div class="tag">🧒 In plain English</div><p>A GRU keeps <b>one</b> memory vector. At every step it asks two questions. <b>Reset gate r</b>: "When drafting a new memory, how much of the past should I look at?" (r ≈ 0 means start fresh, as at the start of a new session). <b>Update gate z</b>: "Should I keep the old memory or replace it with the draft?" It works like a dimmer that blends old and new. The LSTM's separate forget and input gates are merged into this one dimmer: <i>whatever fraction you keep, you don't write</i>.</p></div>
@@ -178,6 +178,27 @@
         n = sum(p.numel() for p in m.parameters())
         print(cell, H, f"{n:,} params")
     # then: same features, same out-of-time split, 3+ seeds each, compare mean ± std of PR-AUC
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Watch the update gate decide what to keep</h2>
+  <p>Record the GRU's update gate z (PyTorch convention: z ≈ 1 keeps the old state) over a sequence. Units with z close to 1 act as long-term memory; units that flicker are short-term feature detectors. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: watch the update gate decide what to keep">
+import torch, torch.nn as nn, matplotlib.pyplot as plt
+torch.manual_seed(0)
+H = 12; cell = nn.GRUCell(1, H)
+x = torch.zeros(30, 1, 1); x[4] = 2.0; x[20] = -2.0
+h = torch.zeros(1, H); Z, R, Hs = [], [], []
+with torch.no_grad():
+    for t in range(30):
+        gi = x[t] @ cell.weight_ih.T + cell.bias_ih; gh = h @ cell.weight_hh.T + cell.bias_hh
+        (ir, iz, inn), (hr, hz, hn) = gi.chunk(3, 1), gh.chunk(3, 1)
+        r, z = (ir + hr).sigmoid(), (iz + hz).sigmoid(); n = (inn + r * hn).tanh()
+        h = (1 - z) * n + z * h
+        Z.append(z[0]); R.append(r[0]); Hs.append(h[0])
+fig, ax = plt.subplots(1, 3, figsize=(13, 3.2), sharey=True)
+for a, (k, v, cm) in zip(ax, [("update z (keep)", Z, "viridis"), ("reset r", R, "viridis"), ("state h", Hs, "RdBu_r")]):
+    im = a.imshow(torch.stack(v).T, aspect="auto", cmap=cm); a.set_title(k); a.set_xlabel("time"); plt.colorbar(im, ax=a)
+ax[0].set_ylabel("unit"); plt.tight_layout(); plt.savefig("gru_gates.png", dpi=110); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

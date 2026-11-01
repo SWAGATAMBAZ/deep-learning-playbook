@@ -55,6 +55,19 @@ input.search{font:inherit;font-size:15px;padding:9px 13px;border-radius:10px;bor
 <script>
 (function(){
 const Q=[
+["PyTorch","view vs reshape?","view never copies and needs contiguous memory; reshape returns a view when possible, otherwise copies."],
+["PyTorch","Why optimizer.zero_grad() every step?","Gradients accumulate in .grad across backward calls; without zeroing you'd step with the sum of past gradients."],
+["PyTorch","model.eval() vs torch.no_grad()?","eval() changes layer behaviour (dropout off, BatchNorm running stats); no_grad/inference_mode stops graph recording. Use both at inference."],
+["PyTorch","Why nn.ModuleList, not a Python list?","Plain lists hide sub-modules: their parameters aren't trained, saved or moved to the device."],
+["PyTorch","Parameter vs buffer?","Both are saved and moved; parameters are trained by the optimizer, buffers aren't (e.g. BatchNorm running stats)."],
+["PyTorch","bf16 vs fp16 mixed precision?","bf16 has fp32's range, so no loss scaling is needed; fp16 needs a GradScaler to avoid gradient underflow."],
+["PyTorch","How much memory for AdamW training per parameter?","About 16 bytes: 4 weights + 4 grads + 8 Adam states, plus activations."],
+["PyTorch","DDP vs FSDP?","DDP replicates the model and all-reduces gradients; FSDP shards params, grads and optimizer state to fit bigger models."],
+["PyTorch","GPU utilisation is low. First checks?","Profile; then num_workers, pin_memory + non_blocking, per-step .item() syncs, batch size, AMP, torch.compile."],
+["PyTorch","Why does loss_total += loss leak memory?","It keeps every step's autograd graph alive; use loss.item() for logging."],
+["Visualisation","What should you log in every training run?","Train/val loss and metric, LR, gradient norm, weight/grad histograms, sample input grid, val confusion matrix/PR curve, hyperparameters."],
+["Visualisation","Integrated Gradients vs Grad-CAM?","IG attributes the output to input features along a baseline path (any model, tabular/text); Grad-CAM weights the last conv feature maps by gradients for a coarse image heatmap."],
+["Visualisation","Why can t-SNE plots mislead?","Cluster sizes and inter-cluster distances aren't meaningful and depend on perplexity/seed; use them qualitatively only."],
 ["Foundations","Why do we need non-linear activations?","Without them, any stack of layers collapses into a single linear transform, so the network can only learn linear boundaries."],
 ["Foundations","Explain backpropagation in one minute.","A forward pass computes the loss. Backprop applies the chain rule from the loss backwards through each layer, computing ∂L/∂w for every weight by reusing upstream gradients. The optimizer then steps each weight against its gradient."],
 ["Foundations","Why ReLU over sigmoid?","Its gradient is 1 for positive inputs, so there's no vanishing on that side. It's cheap and gives sparse activations. Sigmoid saturates (max gradient 0.25), so deep stacks vanish."],

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PyTorch III · Speed, memory & scale · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="pt-performance">
+<main>
+  <div class="eyebrow">PyTorch track · Part III · Week 2+</div>
+  <h1>PyTorch III: Speed, memory &amp; scale</h1>
+  <p class="lede">Once the model trains correctly, the next questions are "why is it slow?", "why does it run out of memory?" and "how do I use 8 GPUs?". This page gives you the tools in the order you'll need them: <b>measure first</b>, then mixed precision, <code>torch.compile</code>, memory tricks, multi-GPU training and export for serving.</p>
+  <div class="callout win" style="margin:6px 0 4px"><div class="tag">🔥 The PyTorch track</div><p><a href="pt-tensors.html">I. Tensors &amp; autograd</a> → <a href="pt-training.html">II. Training loop</a> → <b>III. Speed, memory &amp; scale</b> → <a href="visualization.html">Visualisation toolkit</a> → <a href="pt-drills.html">Drills</a>.</p></div>
+  <div class="toc"><a href="#order">Optimisation order</a><a href="#profile">Profiling</a><a href="#amp">Mixed precision</a><a href="#compile">torch.compile</a><a href="#memory">Where memory goes</a><a href="#mem">Memory estimator</a><a href="#oom">OOM playbook</a><a href="#dist">Multi-GPU</a><a href="#infer">Inference &amp; export</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="order">The optimisation order (cheapest wins first)</h2>
+  <ol>
+    <li><b>Measure</b>: time per step, GPU utilisation (<code>nvidia-smi</code>), the profiler trace. Never optimise blind.</li>
+    <li><b>Fix the input pipeline</b>: <code>num_workers</code>, <code>pin_memory</code>, pre-processed or cached data, GPU-side augmentation.</li>
+    <li><b>Mixed precision</b> (bf16 autocast) and TF32 matmuls: often 1.5–3× faster for free.</li>
+    <li><b>Bigger batches</b> up to the memory limit; <code>channels_last</code> for CNNs; fused optimizers.</li>
+    <li><b><code>torch.compile</code></b>: fuses kernels and cuts Python overhead.</li>
+    <li><b>Memory tricks</b> to fit more: gradient accumulation, activation checkpointing, 8-bit optimizers.</li>
+    <li><b>Scale out</b>: DDP across GPUs, FSDP2 when the model doesn't fit on one GPU.</li>
+  </ol>
+
+  <h2 id="profile">Profiling: find the real bottleneck</h2>
+  <script type="text/plain" class="snippet" data-title="time it properly, then profile">
+    import time, torch, torch.nn as nn
+
+    model = nn.Sequential(nn.Linear(512, 2048), nn.ReLU(), nn.Linear(2048, 512))
+    x = torch.randn(256, 512)
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    model, x = model.to(dev), x.to(dev)
+
+    def sync():
+        if dev == "cuda":
+            torch.cuda.synchronize()          # GPU ops are async: sync before reading the clock
+
+    for _ in range(3): model(x)               # warm-up (cuDNN autotune, compile, caches)
+    sync(); t0 = time.perf_counter()
+    for _ in range(20): model(x)
+    sync(); print(f"{(time.perf_counter() - t0) / 20 * 1e3:.2f} ms / forward")
+
+    from torch.profiler import profile, ProfilerActivity, record_function
+    acts = [ProfilerActivity.CPU] + ([ProfilerActivity.CUDA] if dev == "cuda" else [])
+    with profile(activities=acts, record_shapes=True, profile_memory=True) as prof:
+        with record_function("forward_backward"):
+            model(x).sum().backward()
+    print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=8))
+    prof.export_chrome_trace("trace.json")   # open in ui.perfetto.dev or chrome://tracing
+  </script>
+  <div class="callout interview"><div class="tag">🎯 Tooling note</div><p>The old TensorBoard profiler plugin is <b>deprecated</b>. Export a trace and open it in <b>Perfetto</b> (ui.perfetto.dev) or <code>chrome://tracing</code>. For multi-GPU analysis use <b>Holistic Trace Analysis (HTA)</b>. Look for gaps on the GPU timeline: that's the GPU waiting for data or Python.</p></div>
+
+  <h2 id="amp">Mixed precision (AMP)</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Most of the maths in a network doesn't need 32-bit precision. Doing matrix multiplies in 16-bit roughly halves memory traffic and uses the GPU's tensor cores, while sensitive ops (softmax, losses, reductions) stay in 32-bit automatically. <b>bfloat16</b> keeps fp32's range, so it just works. <b>float16</b> has a small range, so tiny gradients underflow to zero unless you scale the loss up first (GradScaler).</p></div>
+  <script type="text/plain" class="snippet" data-title="bf16 (preferred) and fp16 (with GradScaler)">
+    torch.set_float32_matmul_precision("high")      # allow TF32 for remaining fp32 matmuls (Ampere+)
+
+    # bf16: no scaler needed
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        loss = loss_fn(model(xb), yb)
+    loss.backward(); opt.step(); opt.zero_grad()
+
+    # fp16 (older GPUs such as T4/V100): scale the loss to avoid gradient underflow
+    scaler = torch.amp.GradScaler("cuda")
+    with torch.autocast(device_type="cuda", dtype=torch.float16):
+        loss = loss_fn(model(xb), yb)
+    scaler.scale(loss).backward()
+    scaler.unscale_(opt)                              # unscale BEFORE clipping
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    scaler.step(opt); scaler.update(); opt.zero_grad()
+  </script>
+
+  <h2 id="compile">torch.compile</h2>
+  <ul>
+    <li><code>model = torch.compile(model)</code> captures the Python into graphs (TorchDynamo) and generates fused kernels (TorchInductor/Triton). The first call is slow (compiling); later calls are faster.</li>
+    <li>Modes: default; <code>"reduce-overhead"</code> (CUDA graphs, good for small batches and inference); <code>"max-autotune"</code> (longest compile, fastest kernels).</li>
+    <li><b>Graph breaks</b> (data-dependent Python, <code>.item()</code>, unsupported ops) reduce the gains. Find them with <code>TORCH_LOGS="graph_breaks"</code>. Changing input shapes triggers recompiles; use <code>dynamic=True</code> or pad to fixed sizes.</li>
+    <li>Typical speed-ups: 1.3–2× in training on modern GPUs. Always benchmark your own model.</li>
+  </ul>
+
+  <h2 id="memory">Where training memory goes</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Item</th><th>Size</th><th>Reduce it with</th></tr>
+    <tr><td>Weights</td><td>4 B/param (fp32)</td><td>bf16 weights, quantisation (inference), FSDP sharding</td></tr>
+    <tr><td>Gradients</td><td>Same as the weights</td><td>FSDP / ZeRO sharding</td></tr>
+    <tr><td>Optimizer state</td><td>SGD 0 · momentum 4 B · <b>Adam 8 B/param</b> (m and v)</td><td>8-bit optimizers (bitsandbytes), SGD, sharding</td></tr>
+    <tr><td><b>Activations</b></td><td>∝ batch × sequence/resolution × width × depth; usually the biggest part</td><td>Smaller batch + accumulation, activation checkpointing, mixed precision, shorter sequences</td></tr>
+    <tr><td>Temporary buffers, fragmentation</td><td>Varies</td><td><code>expandable_segments:True</code> allocator setting, avoid keeping graph references</td></tr>
+  </table></div>
+  <div class="callout math"><div class="tag">📐 The 16-bytes-per-parameter rule</div><p>Adam training in fp32 (or AMP with fp32 master weights) needs about <b>4 (weights) + 4 (grads) + 8 (Adam m, v) = 16 bytes per parameter</b> before activations. A 1B-parameter model needs ~16 GB just for that, which is why fine-tuning big models needs LoRA, sharding or 8-bit optimizers.</p></div>
+
+  <h2 id="mem">GPU memory estimator</h2>
+  <div class="widget">
+    <div class="widget-title">Will it fit?</div>
+    <div class="widget-sub">A rough planning estimate for weights + gradients + optimizer state, plus your activation estimate. Real usage adds framework overhead (~1–2 GB) and fragmentation.</div>
+    <div class="controls">
+      <div class="control"><label>parameters (millions) <b id="pmv"></b></label><input type="range" id="pm" min="0" max="4.5" step="0.05" value="2"></div>
+      <div class="control"><label>mode</label><select id="mode"><option value="train32">train · fp32 / AMP (fp32 master)</option><option value="trainbf">train · pure bf16 weights</option><option value="lora">fine-tune · LoRA (1% trainable, frozen bf16 base)</option><option value="inf32">inference · fp32</option><option value="inf16">inference · bf16/fp16</option><option value="inf8">inference · int8</option><option value="inf4">inference · 4-bit</option></select></div>
+      <div class="control"><label>optimizer</label><select id="optk"><option value="8">Adam / AdamW</option><option value="2">Adam 8-bit</option><option value="4">SGD + momentum</option><option value="0">SGD</option></select></div>
+      <div class="control"><label>activation memory (GB, your estimate) <b id="actv"></b></label><input type="range" id="act" min="0" max="40" step="0.5" value="4"></div>
+      <div class="control"><label>GPUs (FSDP shards states) <b id="ngv"></b></label><input type="range" id="ng" min="1" max="8" value="1"></div>
+      <div class="control"><label>GPU memory</label><select id="gpu"><option value="16">16 GB (T4 / V100-16)</option><option value="24">24 GB (L4 / 4090)</option><option value="40">40 GB (A100-40)</option><option value="80" selected>80 GB (A100/H100-80)</option></select></div>
+    </div>
+    <canvas id="mc"></canvas>
+    <div class="readout" id="mout"></div>
+  </div>
+
+  <h2 id="oom">The CUDA out-of-memory playbook</h2>
+  <ol>
+    <li>Make sure you aren't holding graphs: <code>loss.item()</code> for logging, <code>torch.no_grad()</code> in eval, and no lists of tensors that require grad.</li>
+    <li>Halve the batch size and use <b>gradient accumulation</b> to keep the effective batch.</li>
+    <li><b>bf16 autocast</b>: activations take roughly half the memory.</li>
+    <li><b>Activation checkpointing</b> (<code>torch.utils.checkpoint</code>): recompute activations in backward instead of storing them. Large memory savings for ~20–30% extra compute.</li>
+    <li>Shorter sequences or smaller images; truncate or tile.</li>
+    <li>8-bit optimizer, or freeze layers / LoRA.</li>
+    <li>Shard across GPUs with <b>FSDP2</b>, or CPU offload as a last resort.</li>
+    <li>Inspect: <code>torch.cuda.max_memory_allocated()</code>, <code>torch.cuda.memory_summary()</code>, and memory snapshots viewed at pytorch.org/memory_viz.</li>
+  </ol>
+  <script type="text/plain" class="snippet" data-title="activation checkpointing + memory measurement">
+    import torch, torch.nn as nn
+    from torch.utils.checkpoint import checkpoint
+
+    class DeepNet(nn.Module):
+        def __init__(self, d=1024, n=12, use_ckpt=False):
+            super().__init__()
+            self.blocks = nn.ModuleList([nn.Sequential(nn.Linear(d, d), nn.GELU()) for _ in range(n)])
+            self.use_ckpt = use_ckpt
+        def forward(self, x):
+            for blk in self.blocks:
+                x = checkpoint(blk, x, use_reentrant=False) if self.use_ckpt else blk(x)
+            return x
+
+    if torch.cuda.is_available():
+        for ck in (False, True):
+            torch.cuda.reset_peak_memory_stats()
+            m = DeepNet(use_ckpt=ck).cuda()
+            m(torch.randn(4096, 1024, device="cuda", requires_grad=True)).sum().backward()
+            print("checkpointing" if ck else "baseline", f"{torch.cuda.max_memory_allocated() / 2**20:.0f} MiB")
+    # optional deep dive:
+    # torch.cuda.memory._record_memory_history(); ...; torch.cuda.memory._dump_snapshot("snap.pickle")
+    # then drag snap.pickle into https://pytorch.org/memory_viz
+  </script>
+
+  <h2 id="dist">Multi-GPU training</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Approach</th><th>How it works</th><th>Use when</th></tr>
+    <tr><td><b>DDP</b> (DistributedDataParallel)</td><td>Each GPU holds a full model copy and processes a different slice of the batch; gradients are all-reduced (averaged) after backward</td><td>The model fits on one GPU and you want faster training. The default.</td></tr>
+    <tr><td><b>FSDP2</b> (<code>fully_shard</code>)</td><td>Shards parameters, gradients and optimizer state across GPUs; gathers each layer's weights just in time</td><td>The model (plus optimizer state) doesn't fit on one GPU</td></tr>
+    <tr><td>Tensor / pipeline parallel</td><td>Split individual layers / groups of layers across devices</td><td>Very large LLM training (usually via frameworks)</td></tr>
+    <tr><td>DataParallel (old)</td><td>Single-process multi-thread</td><td>Avoid: slower than DDP</td></tr>
+  </table></div>
+  <script type="text/plain" class="snippet" data-title="DDP skeleton, launched with: torchrun --nproc_per_node=4 train.py">
+    import os, torch, torch.distributed as dist
+    from torch.nn.parallel import DistributedDataParallel as DDP
+    from torch.utils.data import DataLoader, DistributedSampler
+
+    def main():
+        dist.init_process_group("nccl")                     # torchrun sets RANK, WORLD_SIZE, LOCAL_RANK
+        local_rank = int(os.environ["LOCAL_RANK"]); torch.cuda.set_device(local_rank)
+        model = build_model().cuda(local_rank)
+        model = DDP(model, device_ids=[local_rank])
+        sampler = DistributedSampler(train_ds, shuffle=True)   # each rank gets a different shard
+        loader = DataLoader(train_ds, batch_size=64, sampler=sampler, num_workers=4, pin_memory=True)
+        opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        for epoch in range(EPOCHS):
+            sampler.set_epoch(epoch)                        # different shuffle each epoch
+            for xb, yb in loader:
+                loss = loss_fn(model(xb.cuda(non_blocking=True)), yb.cuda(non_blocking=True))
+                opt.zero_grad(); loss.backward(); opt.step()   # DDP all-reduces grads in backward
+            if dist.get_rank() == 0:
+                torch.save(model.module.state_dict(), "ckpt.pt")   # save once, unwrapped
+        dist.destroy_process_group()
+
+    # FSDP2 (model too big for one GPU):
+    # from torch.distributed.fsdp import fully_shard
+    # for block in model.blocks: fully_shard(block)
+    # fully_shard(model)
+  </script>
+
+  <h2 id="infer">Inference and export</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Goal</th><th>Tool</th></tr>
+    <tr><td>Fast Python inference</td><td><code>model.eval()</code> + <code>torch.inference_mode()</code> + bf16/fp16 + <code>torch.compile(mode="reduce-overhead")</code></td></tr>
+    <tr><td>Portable graph for serving</td><td><code>torch.export</code> (ExportedProgram), AOTInductor; ONNX via <code>torch.onnx.export(..., dynamo=True)</code> → ONNX Runtime / TensorRT</td></tr>
+    <tr><td>Smaller and faster on CPU/edge</td><td>Quantisation: dynamic INT8 for Linear/LSTM, static or QAT for CNNs. <b>torchao</b> is the current home of PyTorch quantisation APIs.</td></tr>
+    <tr><td>Mobile / edge runtime</td><td>ExecuTorch, or Core ML / TFLite via conversion</td></tr>
+    <tr><td>Model server</td><td>TorchServe, NVIDIA Triton, or FastAPI + batching for simple cases</td></tr>
+  </table></div>
+  <script type="text/plain" class="snippet" data-title="export: torch.export and ONNX">
+    import torch, torch.nn as nn
+    model = nn.Sequential(nn.Linear(16, 32), nn.ReLU(), nn.Linear(32, 1)).eval()
+    example = (torch.randn(4, 16),)
+
+    batch = torch.export.Dim("batch")
+    ep = torch.export.export(model, example, dynamic_shapes=({0: batch},))   # dynamic batch dim
+    print(ep.module()(torch.randn(10, 16)).shape)        # torch.Size([10, 1])
+
+    # ONNX for ONNX Runtime / TensorRT (requires: pip install onnx onnxscript)
+    # torch.onnx.export(model, example, "model.onnx", dynamo=True, dynamic_shapes=({0: batch},))
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>bf16 vs fp16: which and why?</summary><div class="ans"><p>bf16 has the same 8-bit exponent as fp32 (same range) with fewer mantissa bits, so gradients rarely overflow or underflow and no loss scaling is needed. fp16 has more precision but a tiny range, so it needs GradScaler. Use bf16 on Ampere and newer GPUs; fp16 + scaler on older ones (T4, V100).</p></div></details>
+  <details class="qa"><summary>Why must you call torch.cuda.synchronize() when timing?</summary><div class="ans"><p>CUDA kernels launch asynchronously; Python returns before the GPU finishes. Without synchronising you measure launch time, not compute time. Also warm up first.</p></div></details>
+  <details class="qa"><summary>DDP vs FSDP?</summary><div class="ans"><p>DDP replicates the full model on each GPU and averages gradients. It's simple and fastest when the model fits. FSDP shards parameters, gradients and optimizer state across GPUs, gathering layers on demand. It costs more communication but fits much bigger models.</p></div></details>
+  <details class="qa"><summary>How much GPU memory does fine-tuning a 7B model with AdamW need?</summary><div class="ans"><p>Full fine-tuning: ~16 bytes/param × 7B ≈ 112 GB before activations, so you need multiple GPUs with FSDP. With LoRA on a frozen bf16 base: ~14 GB of weights plus small adapter states and activations, so one 24–40 GB GPU. With QLoRA (4-bit base): ~4–5 GB of weights, so even 16 GB GPUs can work.</p></div></details>
+  <details class="qa"><summary>What is activation checkpointing?</summary><div class="ans"><p>Instead of storing every layer's activations for backward, store only some and recompute the rest during the backward pass. It trades extra compute (~20–30%) for a large memory reduction, letting you train deeper models or larger batches.</p></div></details>
+  <details class="qa"><summary>Training is slow and GPU utilisation is low. Steps?</summary><div class="ans"><p>Profile. If the GPU timeline has gaps: raise num_workers, use pin_memory + non_blocking, cache or pre-process data, move augmentation to the GPU, and remove per-step <code>.item()</code>/<code>.cpu()</code> syncs. Then use bigger batches, AMP and torch.compile.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  function mem(){
+    const P=Math.pow(10,+$('pm').value)*1e6,mode=$('mode').value,ob=+$('optk').value,act=+$('act').value,N=+$('ng').value,G=+$('gpu').value;
+    $('pmv').textContent=P>=1e9?(P/1e9).toFixed(2)+'B':(P/1e6).toFixed(0)+'M';$('actv').textContent=act.toFixed(1);$('ngv').textContent=N;
+    let wB,gB,oB,note='';
+    if(mode==='train32'){wB=4;gB=4;oB=ob;}
+    else if(mode==='trainbf'){wB=2;gB=2;oB=ob;note='Pure bf16 weights save memory but can hurt convergence; most recipes keep fp32 master weights.';}
+    else if(mode==='lora'){wB=2;gB=0.02*2;oB=0.01*(4+ob);note='The frozen base in bf16 plus ~1% trainable adapters (fp32 adapter weights, grads and optimizer state).';}
+    else{const m={inf32:4,inf16:2,inf8:1,inf4:0.5}[mode];wB=m;gB=0;oB=0;note='Inference: no gradients or optimizer state. Activations (and the KV cache for LLMs) are separate.';}
+    const shard=mode.startsWith('train')?N:1;
+    const W=P*wB/1e9/(mode.startsWith('inf')||mode==='lora'?1:shard),Gr=P*gB/1e9/shard,O=P*oB/1e9/shard,tot=W+Gr+O+act;
+    const {ctx,w,h,col}=DLP_canvas($('mc'),110);ctx.clearRect(0,0,w,h);
+    const maxv=Math.max(G,tot)*1.05,X=v=>20+v/maxv*(w-40);let x0=0;
+    [['weights',W,col('--accent')],['grads',Gr,'#0f766e'],['optimizer',O,'#b45309'],['activations',act,'#e2554f']].forEach(([n,v,c],k)=>{ctx.fillStyle=c;ctx.fillRect(X(x0),30,Math.max(0,X(x0+v)-X(x0)),36);if(X(x0+v)-X(x0)>60){ctx.fillStyle='#fff';ctx.font='11px ui-sans-serif';ctx.fillText(n,X(x0)+4,52);}x0+=v;});
+    ctx.strokeStyle=col('--ink');ctx.lineWidth=2;ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(X(G),20);ctx.lineTo(X(G),78);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=col('--ink');ctx.font='12px ui-monospace';ctx.fillText(G+' GB GPU',Math.min(X(G)+4,w-80),16);
+    ctx.fillStyle=col('--muted');[['weights',col('--accent')],['grads','#0f766e'],['optimizer','#b45309'],['activations','#e2554f']].forEach(([n,c],k)=>{ctx.fillStyle=c;ctx.fillText('■ '+n,20+k*110,98);});
+    const fits=tot+1.5<=G;
+    $('mout').innerHTML=`per GPU: weights <b>${W.toFixed(2)}</b> + grads <b>${Gr.toFixed(2)}</b> + optimizer <b>${O.toFixed(2)}</b> + activations <b>${act.toFixed(1)}</b> ≈ <b>${tot.toFixed(1)} GB</b> → ${fits?'<span style="color:var(--green)">fits (with ~1.5 GB overhead)</span>':'<span style="color:var(--coral)">OOM: try LoRA, 8-bit Adam, checkpointing, smaller batch, or more GPUs (FSDP)</span>'}${note?'<br><span style="font-family:var(--sans);color:var(--muted)">'+note+'</span>':''}`;
+  }
+  ['pm','mode','optk','act','ng','gpu'].forEach(id=>$(id).addEventListener('input',mem));
+  mem();window.addEventListener('resize',mem);window.addEventListener('dlp-theme',mem);
+})();
+</script>
+</body>
+</html>

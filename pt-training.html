@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PyTorch II · Modules, data & the training loop · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="pt-training">
+<main>
+  <div class="eyebrow">PyTorch track · Part II · Week 1–2</div>
+  <h1>PyTorch II: Modules, data &amp; the training loop</h1>
+  <p class="lede">This is the code you'll write in every project and every coding round: an <code>nn.Module</code>, a <code>Dataset</code> and <code>DataLoader</code>, an optimizer and scheduler, and a training loop with validation, checkpointing and early stopping. Learn the template once and reuse it everywhere.</p>
+  <div class="callout win" style="margin:6px 0 4px"><div class="tag">🔥 The PyTorch track</div><p><a href="pt-tensors.html">I. Tensors &amp; autograd</a> → <b>II. Modules, data &amp; the training loop</b> → <a href="pt-performance.html">III. Speed, memory &amp; scale</a> → <a href="visualization.html">Visualisation toolkit</a> → <a href="pt-drills.html">Drills</a>.</p></div>
+  <div class="toc"><a href="#module">nn.Module</a><a href="#params">Parameters &amp; buffers</a><a href="#save">Saving &amp; loading</a><a href="#data">Dataset &amp; DataLoader</a><a href="#sampler">Sampler live</a><a href="#optim">Optimizers</a><a href="#sched">Schedulers live</a><a href="#loop">The training loop</a><a href="#repro">Reproducibility</a><a href="#eco">Lightning &amp; friends</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="module">nn.Module: the building block</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>A Module is a Python class with two jobs. <code>__init__</code> creates the layers (and their learnable weights), and <code>forward</code> says how data flows through them. Assign a layer as an attribute and PyTorch automatically tracks its parameters, moves them with <code>.to(device)</code>, saves them in <code>state_dict</code> and hands them to the optimizer.</p></div>
+  <script type="text/plain" class="snippet" data-title="anatomy of a module">
+    import torch, torch.nn as nn, torch.nn.functional as F
+
+    class Block(nn.Module):
+        def __init__(self, d, p=0.1):
+            super().__init__()                         # ALWAYS call this first
+            self.fc1, self.fc2 = nn.Linear(d, 4 * d), nn.Linear(4 * d, d)
+            self.norm = nn.LayerNorm(d)
+            self.drop = nn.Dropout(p)
+        def forward(self, x):
+            return x + self.drop(self.fc2(F.gelu(self.fc1(self.norm(x)))))   # pre-norm residual
+
+    class Net(nn.Module):
+        def __init__(self, d_in, d=128, n_blocks=3, n_out=1):
+            super().__init__()
+            self.inp = nn.Linear(d_in, d)
+            self.blocks = nn.ModuleList([Block(d) for _ in range(n_blocks)])  # NOT a Python list
+            self.head = nn.Linear(d, n_out)
+        def forward(self, x):
+            x = self.inp(x)
+            for blk in self.blocks:
+                x = blk(x)                             # call the module, never blk.forward(x)
+            return self.head(x)
+
+    net = Net(20)
+    print(sum(p.numel() for p in net.parameters() if p.requires_grad))
+    print(net(torch.randn(8, 20)).shape)               # torch.Size([8, 1])
+  </script>
+  <div class="table-wrap"><table>
+    <tr><th>Container</th><th>Use when</th></tr>
+    <tr><td><code>nn.Sequential</code></td><td>A straight pipeline with no branching</td></tr>
+    <tr><td><code>nn.ModuleList</code></td><td>A variable number of layers you loop over. A plain Python list would <b>hide</b> them from <code>.parameters()</code>, so they wouldn't train.</td></tr>
+    <tr><td><code>nn.ModuleDict</code></td><td>Named sub-modules, e.g. one embedding per categorical column or one head per task</td></tr>
+    <tr><td><code>torch.nn.functional</code> (F)</td><td>Stateless ops (relu, softmax, cross_entropy). Use modules when there are weights or train/eval behaviour (Dropout, BatchNorm).</td></tr>
+  </table></div>
+
+  <h2 id="params">Parameters, buffers, freezing and initialisation</h2>
+  <script type="text/plain" class="snippet" data-title="parameters vs buffers, freezing, custom init">
+    class Scaler(nn.Module):
+        def __init__(self, d):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(d))          # learnable, in .parameters()
+            self.register_buffer("running_mean", torch.zeros(d))  # saved & moved, NOT trained
+        def forward(self, x):
+            return (x - self.running_mean) * self.weight
+
+    for name, p in net.named_parameters():
+        print(name, tuple(p.shape))                            # inp.weight (128, 20) ...
+
+    for p in net.inp.parameters():                              # freeze a sub-module
+        p.requires_grad = False
+    trainable = [p for p in net.parameters() if p.requires_grad]
+    opt = torch.optim.AdamW(trainable, lr=1e-3)
+
+    def init_weights(m):                                        # custom initialisation
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
+            nn.init.zeros_(m.bias)
+    net.apply(init_weights)                                     # recursively applies to all sub-modules
+
+    # parameter groups: different LR / weight decay per part
+    opt = torch.optim.AdamW([
+        {"params": net.blocks.parameters(), "lr": 1e-4},
+        {"params": net.head.parameters(), "lr": 1e-3, "weight_decay": 0.0},
+    ], weight_decay=0.01)
+  </script>
+
+  <h2 id="save">Saving and loading</h2>
+  <script type="text/plain" class="snippet" data-title="save the state_dict, not the model object">
+    ckpt = {"model": net.state_dict(), "optimizer": opt.state_dict(),
+            "epoch": 7, "best_val": 0.123}
+    torch.save(ckpt, "ckpt.pt")
+
+    net2 = Net(20)                                       # rebuild the architecture in code
+    state = torch.load("ckpt.pt", map_location="cpu", weights_only=True)   # safe loading
+    net2.load_state_dict(state["model"])                 # strict=True by default: catches typos
+    net2.eval()                                          # remember: eval mode for inference
+  </script>
+  <div class="callout trap"><div class="tag">⚠️ Saving pitfalls</div><p><code>torch.save(model)</code> pickles the class path and breaks when you refactor; save the <code>state_dict</code>. Load with <code>map_location</code> to move GPU checkpoints to CPU. A model wrapped in DDP or <code>torch.compile</code> has prefixed keys (<code>module.</code>, <code>_orig_mod.</code>); save the unwrapped model's state_dict. Use <code>weights_only=True</code> for files you didn't create.</p></div>
+
+  <h2 id="data">Dataset and DataLoader</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>A <b>Dataset</b> answers two questions: how many samples (<code>__len__</code>) and give me sample i (<code>__getitem__</code>). A <b>DataLoader</b> shuffles, batches, and loads in parallel worker processes so the GPU never waits for data.</p></div>
+  <script type="text/plain" class="snippet" data-title="custom Dataset + collate_fn for variable-length sequences">
+    import torch
+    from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+    from torch.nn.utils.rnn import pad_sequence
+
+    class TxnDataset(Dataset):
+        def __init__(self, sequences, labels):
+            self.seqs, self.y = sequences, labels           # list of LongTensors, list of 0/1
+        def __len__(self):
+            return len(self.seqs)
+        def __getitem__(self, i):
+            return self.seqs[i], torch.tensor(self.y[i], dtype=torch.float32)
+
+    def collate(batch):                                    # turn a list of samples into tensors
+        seqs, ys = zip(*batch)
+        lengths = torch.tensor([len(s) for s in seqs])
+        padded = pad_sequence(seqs, batch_first=True, padding_value=0)
+        return padded, lengths, torch.stack(ys)
+
+    seqs = [torch.randint(1, 100, (torch.randint(3, 20, (1,)).item(),)) for _ in range(1000)]
+    labels = [1 if i % 20 == 0 else 0 for i in range(1000)]     # 5% positives
+    ds = TxnDataset(seqs, labels)
+
+    # oversample the rare class so batches aren't almost all negatives
+    w = torch.tensor([20.0 if y else 1.0 for y in labels])
+    sampler = WeightedRandomSampler(w, num_samples=len(ds), replacement=True)
+
+    loader = DataLoader(ds, batch_size=64, sampler=sampler,    # sampler and shuffle are exclusive
+                        collate_fn=collate, num_workers=0,     # 4-8 on a real machine
+                        pin_memory=torch.cuda.is_available(), drop_last=True)
+    x, lengths, y = next(iter(loader))
+    print(x.shape, lengths[:5], y.mean())                       # roughly 50% positives now
+  </script>
+  <div class="table-wrap"><table>
+    <tr><th>DataLoader argument</th><th>Typical</th><th>Why</th></tr>
+    <tr><td><code>batch_size</code></td><td>32–512</td><td>GPU throughput vs generalisation</td></tr>
+    <tr><td><code>shuffle</code></td><td>True for train, False for val/test</td><td>Breaks ordering correlations</td></tr>
+    <tr><td><code>num_workers</code></td><td>4–8 (≈ CPU cores)</td><td>Parallel loading; 0 means loading happens in the main process (slow but easy to debug)</td></tr>
+    <tr><td><code>pin_memory</code></td><td>True with CUDA</td><td>Faster host→GPU copies; combine with <code>.to(device, non_blocking=True)</code></td></tr>
+    <tr><td><code>persistent_workers</code></td><td>True with workers</td><td>Don't respawn workers every epoch</td></tr>
+    <tr><td><code>drop_last</code></td><td>True for train with BatchNorm</td><td>Avoids a tiny last batch (BN fails with batch size 1)</td></tr>
+    <tr><td><code>collate_fn</code></td><td>custom for variable sizes</td><td>Padding, dicts, detection targets</td></tr>
+    <tr><td><code>sampler</code></td><td>WeightedRandomSampler, DistributedSampler</td><td>Imbalance, multi-GPU sharding</td></tr>
+  </table></div>
+
+  <h2 id="sampler">What the sampler does to your batches</h2>
+  <div class="widget">
+    <div class="widget-title">Class mix per batch: shuffle vs WeightedRandomSampler</div>
+    <div class="widget-sub">A dataset with a rare positive class. Each column is one batch of 64; red = positives. With plain shuffling, many batches have no positives at all.</div>
+    <div class="controls">
+      <div class="control"><label>positive rate <b id="prv"></b></label><input type="range" id="pr" min="0.002" max="0.2" step="0.002" value="0.02"></div>
+      <div class="control"><label>sampler</label><select id="smp"><option value="shuffle">shuffle=True</option><option value="weighted">WeightedRandomSampler (balanced)</option></select></div>
+    </div>
+    <canvas id="sc"></canvas>
+    <div class="readout" id="sout"></div>
+  </div>
+
+  <h2 id="optim">Optimizers in PyTorch</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Optimizer</th><th>Constructor</th><th>Notes</th></tr>
+    <tr><td>SGD + momentum</td><td><code>optim.SGD(p, lr=0.1, momentum=0.9, nesterov=True, weight_decay=5e-4)</code></td><td>CNNs from scratch</td></tr>
+    <tr><td>Adam</td><td><code>optim.Adam(p, lr=1e-3)</code></td><td>Its <code>weight_decay</code> is L2 regularisation, not decoupled decay</td></tr>
+    <tr><td><b>AdamW</b></td><td><code>optim.AdamW(p, lr=1e-3, weight_decay=0.01)</code></td><td>Default for most work. Exclude biases and norm weights from decay.</td></tr>
+    <tr><td>Fused / foreach</td><td><code>AdamW(..., fused=True)</code></td><td>Faster on CUDA</td></tr>
+  </table></div>
+
+  <h2 id="sched">Learning-rate schedulers</h2>
+  <div class="widget">
+    <div class="widget-title">Scheduler visualiser</div>
+    <div class="widget-sub">The curves match the PyTorch formulas (OneCycleLR with its default cosine annealing). Call <code>sched.step()</code> after <code>opt.step()</code>, per epoch or per batch depending on how you set the total steps.</div>
+    <div class="controls">
+      <div class="control"><label>scheduler</label><select id="sk"><option value="step">StepLR(step_size=30, gamma=0.1)</option><option value="exp">ExponentialLR(gamma=0.97)</option><option value="cos">CosineAnnealingLR(T_max=100)</option><option value="warm" selected>Linear warm-up + cosine (LambdaLR)</option><option value="one">OneCycleLR(max_lr, total=100)</option><option value="plat">ReduceLROnPlateau(factor=0.1, patience=5)</option></select></div>
+      <div class="control"><label>base / max LR <b id="lrv"></b></label><input type="range" id="lr0" min="-5" max="-1" step="0.1" value="-3"></div>
+      <div class="control"><label>warm-up steps (warm-up schedule) <b id="wuv"></b></label><input type="range" id="wu" min="0" max="40" value="10"></div>
+    </div>
+    <canvas id="lc"></canvas>
+    <div class="readout" id="lout"></div>
+  </div>
+
+  <h2 id="loop">The complete training loop (memorise this structure)</h2>
+  <script type="text/plain" class="snippet" data-title="a reusable train / evaluate / fit template">
+    import copy, math, torch, torch.nn as nn
+
+    def train_one_epoch(model, loader, opt, loss_fn, device, sched=None, accum=1, clip=1.0):
+        model.train()
+        total, n = 0.0, 0
+        opt.zero_grad(set_to_none=True)
+        for step, (xb, yb) in enumerate(loader):
+            xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
+            with torch.autocast(device_type=device.split(":")[0], dtype=torch.bfloat16,
+                                enabled=device.startswith("cuda")):
+                loss = loss_fn(model(xb).squeeze(-1), yb) / accum      # scale for accumulation
+            loss.backward()
+            if (step + 1) % accum == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+                opt.step(); opt.zero_grad(set_to_none=True)
+                if sched is not None:
+                    sched.step()                                      # per-step schedulers
+            total += loss.item() * accum * len(xb); n += len(xb)
+        return total / n
+
+    @torch.inference_mode()
+    def evaluate(model, loader, loss_fn, device):
+        model.eval()
+        total, n = 0.0, 0
+        for xb, yb in loader:
+            xb, yb = xb.to(device), yb.to(device)
+            total += loss_fn(model(xb).squeeze(-1), yb).item() * len(xb); n += len(xb)
+        return total / n
+
+    def fit(model, train_dl, val_dl, epochs=50, lr=1e-3, patience=5, device="cpu"):
+        model.to(device)
+        opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+        total_steps = epochs * len(train_dl)
+        sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1, (s + 1) / (0.05 * total_steps))
+                      * 0.5 * (1 + math.cos(math.pi * min(1.0, s / total_steps))))
+        loss_fn = nn.BCEWithLogitsLoss()
+        best, best_state, bad, history = float("inf"), None, 0, []
+        for ep in range(epochs):
+            tr = train_one_epoch(model, train_dl, opt, loss_fn, device, sched)
+            va = evaluate(model, val_dl, loss_fn, device)
+            history.append((tr, va))
+            if va < best - 1e-4:
+                best, best_state, bad = va, copy.deepcopy(model.state_dict()), 0
+            else:
+                bad += 1
+                if bad >= patience:
+                    break                                             # early stopping
+        model.load_state_dict(best_state)                             # restore the best weights
+        return history
+
+    # quick demo on synthetic tabular data
+    from torch.utils.data import TensorDataset, DataLoader
+    X = torch.randn(2000, 20); y = (X[:, 0] + X[:, 1] ** 2 > 1).float()
+    tr_dl = DataLoader(TensorDataset(X[:1600], y[:1600]), batch_size=64, shuffle=True)
+    va_dl = DataLoader(TensorDataset(X[1600:], y[1600:]), batch_size=256)
+    model = nn.Sequential(nn.Linear(20, 64), nn.ReLU(), nn.Linear(64, 1))
+    hist = fit(model, tr_dl, va_dl, epochs=30)
+    print(f"{len(hist)} epochs, best val loss {min(v for _, v in hist):.3f}")
+  </script>
+  <div class="callout interview"><div class="tag">🎯 The 7 lines interviewers look for</div><p><code>model.train()</code> · move the batch to the device · <code>opt.zero_grad()</code> · forward + loss · <code>loss.backward()</code> · (clip) · <code>opt.step()</code>. Then <code>model.eval()</code> + <code>torch.no_grad()</code> for validation. Missing <code>eval()</code> or <code>zero_grad()</code> is the most common red flag.</p></div>
+
+  <h2 id="repro">Reproducibility</h2>
+  <script type="text/plain" class="snippet" data-title="seed everything (and know its limits)">
+    import os, random, numpy as np, torch
+
+    def seed_everything(seed=42, deterministic=False):
+        random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        if deterministic:                        # slower; some ops will raise if non-deterministic
+            os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+            torch.use_deterministic_algorithms(True)
+            torch.backends.cudnn.benchmark = False
+
+    def worker_init_fn(worker_id):               # different but reproducible seeds per worker
+        s = torch.initial_seed() % 2**32
+        np.random.seed(s); random.seed(s)
+
+    g = torch.Generator().manual_seed(42)        # pass as DataLoader(generator=g) for shuffle order
+    seed_everything(42)
+  </script>
+  <p>Even with seeds, results vary across GPUs and library versions. Report <b>mean ± std over 3–5 seeds</b> when comparing models; a 0.3% "win" from one seed is noise.</p>
+
+  <h2 id="eco">Lightning, torchmetrics and friends</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Library</th><th>What it gives you</th><th>When</th></tr>
+    <tr><td><b>PyTorch Lightning</b></td><td>Organises the loop (training_step, configure_optimizers) and handles devices, AMP, DDP, checkpoints and logging</td><td>Bigger projects and teams; after you can write the raw loop yourself</td></tr>
+    <tr><td><b>torchmetrics</b></td><td>Correct, batched, distributed-safe metrics (AUROC, F1, mAP)</td><td>Always better than averaging per-batch AUCs by hand</td></tr>
+    <tr><td><b>Hugging Face Accelerate / Trainer</b></td><td>Minimal-change multi-GPU / mixed precision; full trainer for transformers</td><td>NLP/LLM fine-tuning</td></tr>
+    <tr><td><b>timm, torchvision, transformers, PyG</b></td><td>Pretrained models and layers</td><td>Don't re-implement standard architectures</td></tr>
+  </table></div>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Why use nn.ModuleList instead of a Python list?</summary><div class="ans"><p>Modules in a plain list aren't registered as sub-modules, so their parameters are missing from <code>model.parameters()</code> (never trained), <code>state_dict</code> (never saved) and <code>.to(device)</code> (stay on the CPU).</p></div></details>
+  <details class="qa"><summary>Parameter vs buffer?</summary><div class="ans"><p>Both are saved in state_dict and moved with the model. Parameters are learnable (returned by .parameters() and updated by the optimizer). Buffers are state that isn't trained, like BatchNorm running mean/var or a positional-encoding table.</p></div></details>
+  <details class="qa"><summary>What does model.eval() change?</summary><div class="ans"><p>It sets <code>training=False</code> on every sub-module, so Dropout stops dropping and BatchNorm uses running statistics instead of batch statistics. It does <b>not</b> disable gradient tracking; use <code>torch.no_grad()</code>/<code>inference_mode()</code> for that.</p></div></details>
+  <details class="qa"><summary>Your GPU utilisation is 30% during training. Why?</summary><div class="ans"><p>Usually a data bottleneck: too few <code>num_workers</code>, heavy CPU augmentation, slow disk, no <code>pin_memory</code>, or tiny batches. Other causes: <code>.item()</code>/<code>.cpu()</code> calls every step forcing synchronisation, and Python overhead. Profile first (see PyTorch III).</p></div></details>
+  <details class="qa"><summary>How do you implement gradient accumulation?</summary><div class="ans"><p>Divide the loss by the number of accumulation steps k, call backward every micro-batch, and only call <code>opt.step()</code> + <code>zero_grad()</code> every k micro-batches. The effective batch is k × micro-batch. BatchNorm still sees micro-batches.</p></div></details>
+  <details class="qa"><summary>How would you handle a 1:100 class imbalance in the DataLoader?</summary><div class="ans"><p>Either a <code>WeightedRandomSampler</code> (balanced batches), or keep natural sampling and use <code>pos_weight</code> / focal loss. Don't do both at full strength, because you'd over-correct. Re-calibrate probabilities afterwards if you resample.</p></div></details>
+  <details class="qa"><summary>Where do you call scheduler.step()?</summary><div class="ans"><p>After <code>optimizer.step()</code>. Per batch for OneCycle/warm-up schedules defined in steps, per epoch for epoch-based ones like StepLR. ReduceLROnPlateau takes the validation metric: <code>sched.step(val_loss)</code>.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  let seed=1;const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647;};
+  function sampler(){
+    const p=+$('pr').value,mode=$('smp').value;$('prv').textContent=(p*100).toFixed(1)+'%';seed=7;
+    const {ctx,w,h,col}=DLP_canvas($('sc'),200);ctx.clearRect(0,0,w,h);
+    const B=40,bs=64,cw=(w-20)/B;let empty=0,tot=0;
+    for(let b=0;b<B;b++){let pos=0;const q=mode==='weighted'?0.5:p;for(let i=0;i<bs;i++)if(rnd()<q)pos++;tot+=pos;if(!pos)empty++;
+      const hp=(h-30)*pos/bs;ctx.fillStyle=col('--accent');ctx.globalAlpha=.25;ctx.fillRect(10+b*cw,10,cw-2,h-30);ctx.globalAlpha=1;ctx.fillStyle='#e2554f';ctx.fillRect(10+b*cw,10+(h-30)-hp,cw-2,hp);}
+    ctx.fillStyle=col('--muted');ctx.font='11px ui-monospace';ctx.fillText('40 consecutive batches →',10,h-6);
+    $('sout').innerHTML=mode==='weighted'?`~50% positives per batch; <b>${empty}</b> batches without positives. The model sees the rare class every step. Positives are repeated (replacement=True), so watch for overfitting and re-calibrate probabilities.`:`avg <b>${(tot/B/bs*100).toFixed(1)}%</b> positives; <b style="color:${empty>5?'var(--coral)':'inherit'}">${empty}</b> of 40 batches have <b>zero</b> positives, so gradients rarely carry rare-class signal. Consider the weighted sampler or pos_weight.`;
+  }
+  ['pr','smp'].forEach(id=>$(id).addEventListener('input',sampler));
+  function sched(){
+    const k=$('sk').value,base=Math.pow(10,+$('lr0').value),W=+$('wu').value,T=100;$('lrv').textContent=base.toExponential(1);$('wuv').textContent=W;
+    const lrs=[];const val=[];let cur=base,best=1e9,bad=0;
+    for(let s=0;s<T;s++){let lr;
+      if(k==='step')lr=base*Math.pow(0.1,Math.floor(s/30));
+      else if(k==='exp')lr=base*Math.pow(0.97,s);
+      else if(k==='cos')lr=0.5*base*(1+Math.cos(Math.PI*s/T));
+      else if(k==='warm')lr=base*Math.min(1,(s+1)/Math.max(1,W))*0.5*(1+Math.cos(Math.PI*Math.min(1,s/T)));
+      else if(k==='one'){const init=base/25,minlr=init/1e4,up=0.3*T-1;if(s<=up){const pct=s/up;lr=init+(base-init)*(1-Math.cos(Math.PI*pct))/2;}else{const pct=(s-up)/(T-1-up);lr=base+(minlr-base)*(1-Math.cos(Math.PI*pct))/2;}}
+      else{const v=0.6*Math.exp(-s/12)+0.25+(s>40?0.0:0)+0.01*Math.sin(s)+(cur<base?-0.04*Math.log10(base/cur):0);val.push(v);if(v<best-1e-3){best=v;bad=0;}else if(++bad>5){cur*=0.1;bad=0;}lr=cur;}
+      lrs.push(lr);}
+    const {ctx,w,h,col}=DLP_canvas($('lc'),230);ctx.clearRect(0,0,w,h);const mx=Math.max(...lrs);
+    const X=s=>44+s/(T-1)*(w-60),Y=v=>12+(1-v/mx)*(h-40);
+    ctx.strokeStyle=col('--line');ctx.beginPath();ctx.moveTo(44,12);ctx.lineTo(44,h-28);ctx.lineTo(w-16,h-28);ctx.stroke();
+    ctx.fillStyle=col('--muted');ctx.font='11px ui-monospace';ctx.fillText(mx.toExponential(1),2,16);ctx.fillText('0',30,h-28);ctx.fillText('step →',w-60,h-10);
+    ctx.strokeStyle=col('--accent');ctx.lineWidth=2.5;ctx.beginPath();lrs.forEach((v,s)=>s?ctx.lineTo(X(s),Y(v)):ctx.moveTo(X(s),Y(v)));ctx.stroke();
+    if(val.length){const vm=Math.max(...val);ctx.strokeStyle='#e2554f';ctx.lineWidth=1.5;ctx.setLineDash([4,4]);ctx.beginPath();val.forEach((v,s)=>{const y=12+(1-v/vm)*(h-40);s?ctx.lineTo(X(s),y):ctx.moveTo(X(s),y);});ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#e2554f';ctx.fillText('- - val loss (simulated)',w-180,20);}
+    const notes={step:'Drops by 10× at fixed epochs. Classic ResNet recipe.',exp:'Smooth geometric decay.',cos:'Smooth decay to ~0. A modern default.',warm:'Small steps while weights are random, then cosine decay. The standard for transformers and fine-tuning.',one:'Starts at max_lr/25, ramps up for 30% of training, then anneals far below the start. Fast convergence; strongly regularising.',plat:'Cuts the LR by 10× when the validation loss stops improving for 5 checks. No schedule to design; reacts to training.'};
+    $('lout').innerHTML=`${notes[k]} &nbsp;|&nbsp; LR at step 0: <b>${lrs[0].toExponential(2)}</b>, step 50: <b>${lrs[50].toExponential(2)}</b>, final: <b>${lrs[T-1].toExponential(2)}</b>`;
+  }
+  ['sk','lr0','wu'].forEach(id=>$(id).addEventListener('input',sched));
+  sampler();sched();window.addEventListener('resize',()=>{sampler();sched();});window.addEventListener('dlp-theme',()=>{sampler();sched();});
+})();
+</script>
+</body>
+</html>

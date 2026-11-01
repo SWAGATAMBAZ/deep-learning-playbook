@@ -11,7 +11,7 @@
   <h1>Embeddings &amp; NLP</h1>
   <p class="lede">Banks drown in complaints, chats and KYC documents; e-commerce in reviews and search queries. The workhorse is the same everywhere: <b>turn text into vectors that capture meaning</b>, then classify, search or extract.</p>
   <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Parameters &amp; tuning per model</div><p>Every model on this page has a card in the <a href="models.html#nlp">Model encyclopedia</a> with its key parameters, starting values, how to improve it and when to avoid it.</p></div>
-  <div class="toc"><a href="#embed">Embeddings</a><a href="#play">Embedding space</a><a href="#tok">Tokenisation</a><a href="#w2v">Word2Vec</a><a href="#ctx">Contextual</a><a href="#tasks">Tasks</a><a href="#choose">Which approach</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#embed">Embeddings</a><a href="#play">Embedding space</a><a href="#tok">Tokenisation</a><a href="#w2v">Word2Vec</a><a href="#ctx">Contextual</a><a href="#tasks">Tasks</a><a href="#choose">Which approach</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="embed">What an embedding is</h2>
   <div class="callout layman"><div class="tag">🧒 In plain English</div><p>An embedding is a GPS coordinate for meaning. Words, sentences, products or customers that mean or behave alike get coordinates close together. "Refund" and "chargeback" sit near each other; "refund" and "mortgage" are far apart. Once everything has coordinates, "find similar" is just "find nearby points".</p></div>
@@ -102,6 +102,20 @@
     scores = (E @ q.T).ravel()                               # cosine, since vectors are normalised
     print(faqs[int(np.argmax(scores))])                     # -> chargeback FAQ
     # at scale: store E in FAISS / a vector DB and use approximate nearest-neighbour search
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Choose max_length from the token-length distribution</h2>
+  <p>Before fine-tuning, plot how many tokens your texts have. Setting <code>max_length</code> at roughly the 95th percentile avoids truncating most texts while not wasting compute on padding. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: choose max_length from the token-length distribution">
+import numpy as np, matplotlib.pyplot as plt
+rng = np.random.default_rng(0)
+lengths = np.concatenate([rng.lognormal(3.6, 0.6, 9000), rng.lognormal(5.2, 0.4, 1000)]).astype(int)
+# with Hugging Face: lengths = [len(tok(t)["input_ids"]) for t in texts]
+p95 = int(np.percentile(lengths, 95))
+plt.hist(lengths, bins=80, color="C0", alpha=0.8); plt.axvline(p95, c="r", ls="--", label=f"95th pct = {p95}")
+plt.axvline(512, c="k", ls=":", label="BERT limit 512"); plt.xlim(0, 700)
+plt.title(f"Token lengths: {np.mean(lengths > 512):.1%} of texts exceed 512"); plt.xlabel("tokens"); plt.legend()
+plt.savefig("token_lengths.png", dpi=120); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

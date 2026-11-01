@@ -10,7 +10,7 @@
   <div class="eyebrow">Lesson 14 · Week 8 · What separates DS II from DS I</div>
   <h1>Production, monitoring &amp; explainability</h1>
   <p class="lede">A model is only valuable once it's serving decisions reliably. DS II interviews check that you've thought about <b>latency, drift, calibration, explainability and fairness</b>, not just accuracy.</p>
-  <div class="toc"><a href="#serve">Serving patterns</a><a href="#fast">Making it fast</a><a href="#drift">Drift live</a><a href="#calib">Calibration</a><a href="#xai">Explainability</a><a href="#fair">Fairness</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#serve">Serving patterns</a><a href="#fast">Making it fast</a><a href="#drift">Drift live</a><a href="#calib">Calibration</a><a href="#xai">Explainability</a><a href="#fair">Fairness</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="serve">Serving patterns</h2>
   <div class="table-wrap"><table>
@@ -100,6 +100,30 @@
         e = np.histogram(expected, cuts)[0] / len(expected) + 1e-6
         a = np.histogram(actual, cuts)[0] / len(actual) + 1e-6
         return np.sum((a - e) * np.log(a / e))
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Drift and calibration monitors</h2>
+  <p>Two plots every production model should have on a dashboard: PSI per feature (which inputs drifted) and the reliability diagram (are the probabilities still honest?). More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: drift and calibration monitors">
+import numpy as np, matplotlib.pyplot as plt
+from sklearn.calibration import calibration_curve
+rng = np.random.default_rng(0)
+def psi(e, a, bins=10):
+    cuts = np.quantile(e, np.linspace(0, 1, bins + 1)); cuts[0], cuts[-1] = -np.inf, np.inf
+    pe = np.histogram(e, cuts)[0] / len(e) + 1e-6; pa = np.histogram(a, cuts)[0] / len(a) + 1e-6
+    return np.sum((pa - pe) * np.log(pa / pe))
+feats = {"amount": 0.6, "hour": 0.05, "device_age": 0.25, "velocity_1h": 0.0, "merchant_risk": 0.12}
+psis = {f: psi(rng.normal(0, 1, 5000), rng.normal(shift, 1, 5000)) for f, shift in feats.items()}
+p_true = 1 / (1 + np.exp(-rng.normal(-2.5, 1.5, 5000)))            # real fraud probability
+y = rng.random(5000) < p_true
+p = 1 / (1 + np.exp(-1.8 * np.log(p_true / (1 - p_true))))           # an over-confident model
+frac_pos, mean_pred = calibration_curve(y, p, n_bins=10, strategy="quantile")
+fig, ax = plt.subplots(1, 2, figsize=(12, 3.6))
+cols = ["C3" if v > 0.25 else "C1" if v > 0.1 else "C2" for v in psis.values()]
+ax[0].barh(list(psis), list(psis.values()), color=cols); ax[0].axvline(0.1, ls=":", c="k"); ax[0].axvline(0.25, ls="--", c="k")
+ax[0].set_title("PSI by feature (0.1 watch, 0.25 act)")
+ax[1].plot([0, 1], [0, 1], "k:"); ax[1].plot(mean_pred, frac_pos, "o-"); ax[1].set(xlabel="predicted", ylabel="observed", title="reliability diagram")
+plt.tight_layout(); plt.savefig("monitoring.png", dpi=110); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

@@ -11,7 +11,7 @@
   <h1>Recurrent neural networks (RNN)</h1>
   <p class="lede">An RNN reads a sequence one step at a time and carries a <b>hidden state</b>, a running summary of everything it has seen so far. It's the foundation for <a href="lstm.html">LSTM</a> and <a href="gru.html">GRU</a>, and the place where the most famous deep learning problem shows up: <b>vanishing gradients</b>.</p>
   <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Three-part series</div><p><b>I. RNN</b> (this page: sequence basics, BPTT, vanishing gradients, shapes, variants) → <a href="lstm.html"><b>II. LSTM</b></a> (gates and cell state in depth) → <a href="gru.html"><b>III. GRU</b></a> (the lighter gated model, and LSTM vs GRU). Parameters for each are also in the <a href="models.html#sequence">Model encyclopedia</a>.</p></div>
-  <div class="toc"><a href="#why">Why sequences need memory</a><a href="#shapes">Task shapes</a><a href="#cell">The RNN cell</a><a href="#sim">Step-through simulator</a><a href="#bptt">BPTT</a><a href="#vanish">Vanishing &amp; exploding</a><a href="#torch">PyTorch shapes</a><a href="#params">Parameter count</a><a href="#variants">Variants</a><a href="#data">Preparing sequence data</a><a href="#hp">Hyperparameters</a><a href="#when">When to use what</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#why">Why sequences need memory</a><a href="#shapes">Task shapes</a><a href="#cell">The RNN cell</a><a href="#sim">Step-through simulator</a><a href="#bptt">BPTT</a><a href="#vanish">Vanishing &amp; exploding</a><a href="#torch">PyTorch shapes</a><a href="#params">Parameter count</a><a href="#variants">Variants</a><a href="#data">Preparing sequence data</a><a href="#hp">Hyperparameters</a><a href="#when">When to use what</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="why">Why sequences need memory</h2>
   <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Think of reading a bank statement line by line. To judge whether today's ₹80,000 transfer is odd, you need to remember what came before: small UPI payments, salary on the 1st, nothing overseas. An MLP sees one fixed-size input and has no memory. An RNN keeps a notebook (the hidden state) and updates it after reading each line. It uses the <b>same update rule at every step</b>, so it works for sequences of any length.</p></div>
@@ -215,6 +215,22 @@
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)   # always clip RNNs
         opt.step()
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Heatmap of hidden states over time</h2>
+  <p>Plot the hidden state (time × units) for one sequence. You'll see which units react to which events and whether the state saturates at ±1 (a sign of vanishing gradients) or carries information forward. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: heatmap of hidden states over time">
+import torch, torch.nn as nn, matplotlib.pyplot as plt
+torch.manual_seed(0)
+rnn = nn.RNN(input_size=1, hidden_size=16, batch_first=True)
+x = torch.zeros(1, 40, 1); x[0, 5] = 3.0; x[0, 25] = -3.0          # two events in a quiet sequence
+with torch.no_grad():
+    out, _ = rnn(x)                                                # (1, 40, 16)
+fig, ax = plt.subplots(2, 1, figsize=(10, 4.5), sharex=True, gridspec_kw={"height_ratios": [1, 3]})
+ax[0].stem(x[0, :, 0]); ax[0].set_title("input events")
+im = ax[1].imshow(out[0].T, aspect="auto", cmap="RdBu_r", vmin=-1, vmax=1)
+ax[1].set_ylabel("hidden unit"); ax[1].set_xlabel("time step"); plt.colorbar(im, ax=ax[1])
+plt.tight_layout(); plt.savefig("rnn_states.png", dpi=110); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

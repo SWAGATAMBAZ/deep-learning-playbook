@@ -18,7 +18,7 @@
   <div class="eyebrow">Lesson 04 · Week 3 · Vision</div>
   <h1>CNNs &amp; computer vision</h1>
   <p class="lede">A convolutional network slides small learnable filters over an image. Each filter learns to detect one pattern (an edge, a texture, eventually a face) wherever it appears in the image.</p>
-  <div class="toc"><a href="#why">Why convolution</a><a href="#conv">Convolution live</a><a href="#size">Output size</a><a href="#pool">Pooling</a><a href="#arch">Architectures</a><a href="#tl">Transfer learning</a><a href="#tasks">Detection &amp; segmentation</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#why">Why convolution</a><a href="#conv">Convolution live</a><a href="#size">Output size</a><a href="#pool">Pooling</a><a href="#arch">Architectures</a><a href="#tl">Transfer learning</a><a href="#tasks">Detection &amp; segmentation</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="why">Why not just use an MLP on pixels?</h2>
   <div class="callout layman"><div class="tag">🧒 In plain English</div><p>A 224×224 colour image has 150,528 numbers. A dense layer of 1,000 neurons would need 150 <b>million</b> weights, and it would have to learn "cat in the top-left" separately from "cat in the bottom-right". A CNN uses one small 3×3 filter, shares it across the whole image, and only looks at neighbouring pixels. That gives far fewer parameters and finds the pattern wherever it is.</p></div>
@@ -144,6 +144,23 @@
             self.head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(64, n_classes))
         def forward(self, x):
             return self.head(self.features(x))
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Look at your batches before training</h2>
+  <p>The single most valuable vision plot is a grid of training images <b>after</b> transforms, with their labels. It catches wrong normalisation, broken augmentation, mislabelled folders and channel-order bugs before you waste GPU hours. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: look at your batches before training">
+import torch, torchvision, matplotlib.pyplot as plt
+from torchvision.transforms import v2
+torch.manual_seed(0)
+imgs = torch.rand(16, 3, 64, 64)                       # stand-in for next(iter(train_loader))
+labels = torch.randint(0, 3, (16,)); classes = ["ok", "scratch", "dent"]
+mean, std = torch.tensor([0.485, 0.456, 0.406]), torch.tensor([0.229, 0.224, 0.225])
+norm = v2.Normalize(mean.tolist(), std.tolist())(imgs)  # what the model actually sees
+shown = (norm * std.view(3, 1, 1) + mean.view(3, 1, 1)).clamp(0, 1)   # UN-normalise before plotting!
+grid = torchvision.utils.make_grid(shown, nrow=8, padding=2)
+plt.figure(figsize=(12, 3.4)); plt.imshow(grid.permute(1, 2, 0)); plt.axis("off")
+plt.title(" | ".join(classes[i] for i in labels[:8]) + "  ..."); plt.savefig("batch_grid.png", dpi=110); plt.show()
+# filters, feature maps and Grad-CAM: see the Visualisation toolkit page
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

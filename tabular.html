@@ -11,7 +11,7 @@
   <h1>Deep learning on tabular data</h1>
   <p class="lede">Most data at banks and fintechs lives in tables: customers, transactions, loans. The honest truth interviewers want to hear is that <b>gradient-boosted trees are still the default</b>, and deep learning earns its place only in specific situations.</p>
   <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Parameters &amp; tuning per model</div><p>Every model on this page has a card in the <a href="models.html#tabular">Model encyclopedia</a> with its key parameters, starting values, how to improve it and when to avoid it.</p></div>
-  <div class="toc"><a href="#why">Why trees win</a><a href="#when">When DL wins</a><a href="#embed">Entity embeddings</a><a href="#arch">Architectures</a><a href="#prep">Preprocessing</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#why">Why trees win</a><a href="#when">When DL wins</a><a href="#embed">Entity embeddings</a><a href="#arch">Architectures</a><a href="#prep">Preprocessing</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="why">Why trees usually beat neural nets on tables</h2>
   <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Tabular features are a mixed bag: age, income, merchant category, "days since last login". Each column means something different, and the rules are often sharp ("if utilisation &gt; 90% then risk jumps"). Trees are built to make exactly those sharp, axis-aligned cuts. Neural networks prefer smooth functions and treat every input the same way, so they need more data and tuning to match trees.</p></div>
@@ -83,6 +83,26 @@
     model = TabularNet(cat_cardinalities=[5000, 30, 12], n_num=20)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([50.0]))   # imbalance
     # after training: model.embs[0].weight -> merchant embeddings to reuse in XGBoost
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: See what the entity embeddings learned</h2>
+  <p>Project the learned category embeddings to 2-D. Categories that behave alike, such as merchants with similar fraud rates, should cluster together. That's a sanity check that the model learned meaningful representations. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: see what the entity embeddings learned">
+import torch, torch.nn as nn, matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+torch.manual_seed(0)
+n_merch, group = 60, torch.arange(60) % 3                 # 3 hidden merchant "types"
+risk = torch.tensor([-2.0, 0.0, 2.0])[group]               # each type has a different fraud rate
+m_ids = torch.randint(0, n_merch, (20000,))
+y = torch.bernoulli(torch.sigmoid(risk[m_ids] + 0.3 * torch.randn(20000)))
+emb = nn.Embedding(n_merch, 8); head = nn.Linear(8, 1)
+opt = torch.optim.Adam(list(emb.parameters()) + list(head.parameters()), 5e-2)
+for _ in range(300):
+    opt.zero_grad(); nn.functional.binary_cross_entropy_with_logits(head(emb(m_ids)).squeeze(1), y).backward(); opt.step()
+
+xy = PCA(2).fit_transform(emb.weight.detach().numpy())
+plt.scatter(xy[:, 0], xy[:, 1], c=group, cmap="viridis", s=40)
+plt.title("Merchant embeddings (PCA): colour = true risk type"); plt.savefig("emb_pca.png", dpi=120); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

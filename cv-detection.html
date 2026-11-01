@@ -10,7 +10,7 @@
   <div class="eyebrow">Computer vision II · Week 3–4</div>
   <h1>Detection, segmentation &amp; the rest of computer vision</h1>
   <p class="lede">Classification answers "what is in this image?". Real products need "<b>where</b> is it?", "<b>which pixels</b>?", "<b>what does it say</b>?" and "<b>is this the same person</b>?". This page covers every major CV task, the models for each, their key parameters and how to make them better.</p>
-  <div class="toc"><a href="#tasks">Task map</a><a href="#boxes">Boxes &amp; IoU</a><a href="#nms">NMS live</a><a href="#map">mAP</a><a href="#det">Detector families</a><a href="#detknobs">Detection tuning</a><a href="#seg">Segmentation</a><a href="#segknobs">Segmentation tuning</a><a href="#other">Pose · tracking · OCR · similarity</a><a href="#found">Foundation models</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#tasks">Task map</a><a href="#boxes">Boxes &amp; IoU</a><a href="#nms">NMS live</a><a href="#map">mAP</a><a href="#det">Detector families</a><a href="#detknobs">Detection tuning</a><a href="#seg">Segmentation</a><a href="#segknobs">Segmentation tuning</a><a href="#other">Pose · tracking · OCR · similarity</a><a href="#found">Foundation models</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="tasks">The CV task map</h2>
   <div class="table-wrap"><table>
@@ -212,6 +212,27 @@
         p = (torch.sigmoid(logits) > thr).float()
         inter = (p * y).sum((1, 2, 3)); union = ((p + y) > 0).float().sum((1, 2, 3))
         return (inter / (union + 1e-9)).mean()
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Draw boxes and masks on images</h2>
+  <p>torchvision ships helpers to overlay predictions, which is essential for eyeballing false positives, missed objects and loose boxes. Plot ground truth and predictions side by side. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: draw boxes and masks on images">
+import torch, matplotlib.pyplot as plt
+from torchvision.utils import draw_bounding_boxes, draw_segmentation_masks
+yy, xx = torch.meshgrid(torch.linspace(0, 1, 240), torch.linspace(0, 1, 320), indexing="ij")
+img = torch.stack([0.3 + 0.4 * xx, 0.35 + 0.3 * yy, 0.5 + 0 * xx])          # soft background
+img[:, 70:160, 50:140] = torch.tensor([0.75, 0.2, 0.2]).view(3, 1, 1)      # object 1
+img[:, 60:150, 190:280] = torch.tensor([0.2, 0.25, 0.7]).view(3, 1, 1)     # object 2
+img = (img * 255).to(torch.uint8)                                          # uint8 (C, H, W) image
+gt = torch.tensor([[40, 60, 150, 170], [180, 50, 290, 160]])
+pred = torch.tensor([[45, 58, 160, 175], [200, 70, 300, 150], [10, 10, 60, 50]])
+scores = [0.93, 0.71, 0.32]
+out = draw_bounding_boxes(img, gt, colors="lime", width=3, labels=["gt: dent", "gt: scratch"])
+out = draw_bounding_boxes(out, pred, colors="red", width=2, labels=[f"pred {s:.2f}" for s in scores])
+mask = torch.zeros(240, 320, dtype=torch.bool); mask[60:170, 40:150] = True
+out = draw_segmentation_masks(out, mask, alpha=0.35, colors="yellow")
+plt.figure(figsize=(7, 5)); plt.imshow(out.permute(1, 2, 0)); plt.axis("off")
+plt.title("green = ground truth, red = predictions"); plt.savefig("boxes.png", dpi=110); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

@@ -19,7 +19,7 @@
   <h1>Attention &amp; Transformers</h1>
   <p class="lede">The transformer is the architecture behind BERT, GPT, ViT and modern recommenders. Its core idea is simple: <b>every token looks at every other token and decides how much to borrow from each.</b></p>
   <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Parameters &amp; tuning per model</div><p>Every model on this page has a card in the <a href="models.html#nlp">Model encyclopedia</a> with its key parameters, starting values, how to improve it and when to avoid it.</p></div>
-  <div class="toc"><a href="#intuition">Intuition</a><a href="#play">Attention live</a><a href="#math">Q, K, V maths</a><a href="#mha">Multi-head</a><a href="#pos">Positional encoding</a><a href="#block">The block</a><a href="#families">BERT vs GPT</a><a href="#cost">Cost &amp; tricks</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#intuition">Intuition</a><a href="#play">Attention live</a><a href="#math">Q, K, V maths</a><a href="#mha">Multi-head</a><a href="#pos">Positional encoding</a><a href="#block">The block</a><a href="#families">BERT vs GPT</a><a href="#cost">Cost &amp; tricks</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="intuition">Intuition: a soft dictionary lookup</h2>
   <div class="callout layman"><div class="tag">🧒 In plain English</div><p>In <i>"The bank approved the loan because <b>it</b> was low-risk"</i>, what does "it" mean? You resolve it by looking back at the other words and focusing on "loan". Attention does exactly this. Each word sends out a <b>Query</b> ("what am I looking for?"), every word advertises a <b>Key</b> ("what I contain"), and the matches decide how much of each word's <b>Value</b> (its actual content) gets blended into the new representation of "it".</p></div>
@@ -123,6 +123,21 @@
     # x: (B, n, 128) token + positional embeddings; pad_mask: (B, n) True where padding
     h = encoder(x, src_key_padding_mask=pad_mask)
     logits = classifier(h[:, 0])      # use a [CLS] token, or mean-pool over non-pad tokens
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Visualise positional encodings and attention</h2>
+  <p>The sinusoidal encoding table is a classic plot: each dimension oscillates at a different frequency, so every position gets a unique fingerprint. For attention maps from real models, see the <a href="visualization.html#attn">toolkit</a>. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: visualise positional encodings and attention">
+import math, torch, matplotlib.pyplot as plt
+T, d = 100, 64
+pos = torch.arange(T).unsqueeze(1); div = torch.exp(torch.arange(0, d, 2) * (-math.log(10000.0) / d))
+pe = torch.zeros(T, d); pe[:, 0::2] = torch.sin(pos * div); pe[:, 1::2] = torch.cos(pos * div)
+fig, ax = plt.subplots(1, 2, figsize=(13, 3.6))
+im = ax[0].imshow(pe, aspect="auto", cmap="RdBu_r"); ax[0].set(xlabel="dimension", ylabel="position", title="sinusoidal PE")
+plt.colorbar(im, ax=ax[0])
+sim = pe @ pe.T                                         # dot product between positions
+ax[1].imshow(sim, cmap="viridis"); ax[1].set(title="PE similarity: nearby positions are similar", xlabel="position", ylabel="position")
+plt.tight_layout(); plt.savefig("pos_enc.png", dpi=110); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

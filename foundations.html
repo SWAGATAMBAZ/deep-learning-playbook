@@ -11,7 +11,7 @@
   <h1>Neural network foundations</h1>
   <p class="lede">A neural network is a stack of very simple functions. Each one is a weighted sum followed by a bend. Training means nudging the weights so the output's error goes down. Everything else in deep learning builds on that.</p>
   <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Parameters &amp; tuning per model</div><p>Every model on this page has a card in the <a href="models.html#foundations">Model encyclopedia</a> with its key parameters, starting values, how to improve it and when to avoid it.</p></div>
-  <div class="toc"><a href="#ml-vs-dl">ML vs DL</a><a href="#neuron">The neuron</a><a href="#activations">Activations</a><a href="#loss">Loss functions</a><a href="#gd">Gradient descent</a><a href="#backprop">Backprop</a><a href="#code">Code</a><a href="#qa">Interview Q&amp;A</a></div>
+  <div class="toc"><a href="#ml-vs-dl">ML vs DL</a><a href="#neuron">The neuron</a><a href="#activations">Activations</a><a href="#loss">Loss functions</a><a href="#gd">Gradient descent</a><a href="#backprop">Backprop</a><a href="#code">Code</a><a href="#qa">Interview Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="ml-vs-dl">Machine learning vs deep learning</h2>
   <div class="callout layman"><div class="tag">🧒 In plain English</div>
@@ -138,6 +138,26 @@
         loss.backward()
         opt.step()
     probs = torch.sigmoid(model(Xt))     # apply sigmoid only at inference
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Plot a decision boundary</h2>
+  <p>After training any 2-D classifier, colour the input space by predicted probability. It shows instantly whether the network learned a curved boundary or is still linear. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: plot a decision boundary">
+import torch, torch.nn as nn, matplotlib.pyplot as plt
+torch.manual_seed(0)
+X = torch.randn(600, 2); y = ((X[:, 0] ** 2 + X[:, 1] ** 2) < 1.2).float()     # circle-shaped class
+net = nn.Sequential(nn.Linear(2, 32), nn.ReLU(), nn.Linear(32, 32), nn.ReLU(), nn.Linear(32, 1))
+opt = torch.optim.Adam(net.parameters(), 1e-2)
+for _ in range(500):
+    opt.zero_grad(); nn.functional.binary_cross_entropy_with_logits(net(X).squeeze(1), y).backward(); opt.step()
+
+xx, yy = torch.meshgrid(torch.linspace(-3, 3, 200), torch.linspace(-3, 3, 200), indexing="xy")
+with torch.no_grad():
+    p = torch.sigmoid(net(torch.stack([xx.ravel(), yy.ravel()], 1))).view(200, 200)
+plt.contourf(xx, yy, p, levels=20, cmap="RdBu_r", alpha=0.7); plt.colorbar(label="P(class 1)")
+plt.contour(xx, yy, p, levels=[0.5], colors="k")                     # the decision boundary
+plt.scatter(X[:, 0], X[:, 1], c=y, cmap="RdBu_r", s=6, edgecolors="none")
+plt.title("MLP decision boundary"); plt.savefig("boundary.png", dpi=120); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

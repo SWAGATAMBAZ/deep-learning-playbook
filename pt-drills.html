@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PyTorch drills · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+<style>.dfil{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}.dfil button{border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:99px;padding:5px 12px;font:inherit;font-size:13.5px;cursor:pointer}.dfil button.on{background:var(--accent);color:#fff;border-color:var(--accent)}.drill details.qa{box-shadow:none}</style>
+</head>
+<body data-page="pt-drills">
+<main>
+  <div class="eyebrow">PyTorch track · Practice · Coding-round prep</div>
+  <h1>PyTorch coding drills</h1>
+  <p class="lede">24 exercises that come up in DS / ML coding rounds: implement a layer, a loss, attention, a training-loop feature, or an evaluation metric from scratch. <b>Every solution ships with assertions that compare against PyTorch or scikit-learn, and all of them were run and pass.</b> Write your own version first, then reveal.</p>
+  <div class="callout win" style="margin:6px 0 4px"><div class="tag">🔥 The PyTorch track</div><p><a href="pt-tensors.html">I. Tensors</a> → <a href="pt-training.html">II. Training loop</a> → <a href="pt-performance.html">III. Performance</a> → <a href="visualization.html">Visualisation</a> → <b>Drills</b>.</p></div>
+  <div class="callout interview"><div class="tag">🎯 How to practise</div><p>Set a 15-minute timer per drill. Write it in a blank notebook <i>without</i> autocomplete, run the assertions, then compare with the solution. Redo the ones you missed three days later. Tick "solved" to track progress (saved in your browser).</p></div>
+  <div class="dfil" id="dfil"><button data-c="All">All</button><button data-c="Tensors">Tensors</button><button data-c="Layers">Layers</button><button data-c="Training">Training</button><button data-c="Losses">Losses</button><button data-c="Autograd">Autograd</button><button data-c="Sequences">Sequences</button><button data-c="Evaluation">Evaluation</button></div>
+  <div id="dcount" style="color:var(--muted);font-size:13px"></div>
+  <div class="drill card" data-cat="Tensors" id="d1" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">01. Numerically stable softmax</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d1"> solved</label></div>
+      <span class="pill">Tensors</span>
+      <p style="color:var(--ink);font-size:15px">Implement <code>softmax(x, dim)</code> without <code>torch.softmax</code>. It must not overflow for logits like 1000.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Subtract the max along dim before exp.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 01: solution and assertions">
+import torch
+def softmax(x, dim=-1):
+    z = x - x.max(dim=dim, keepdim=True).values      # stability: largest logit becomes 0
+    e = z.exp()
+    return e / e.sum(dim=dim, keepdim=True)
+
+x = torch.tensor([[1000., 1001., 1002.], [1., 2., 3.]])
+assert torch.allclose(softmax(x), torch.softmax(x, -1))
+assert torch.isfinite(softmax(x)).all()
+  </script></div></details>
+    </div><div class="drill card" data-cat="Tensors" id="d2" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">02. Cross-entropy from logits</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d2"> solved</label></div>
+      <span class="pill">Tensors</span>
+      <p style="color:var(--ink);font-size:15px">Implement mean cross-entropy from raw logits (B, C) and integer targets (B,), matching <code>F.cross_entropy</code>.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Use log-softmax via logsumexp, then gather the target column.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 02: solution and assertions">
+import torch, torch.nn.functional as F
+def cross_entropy(logits, target):
+    log_probs = logits - torch.logsumexp(logits, dim=1, keepdim=True)
+    return -log_probs.gather(1, target.unsqueeze(1)).mean()
+
+logits, y = torch.randn(8, 5), torch.randint(0, 5, (8,))
+assert torch.allclose(cross_entropy(logits, y), F.cross_entropy(logits, y), atol=1e-6)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Tensors" id="d3" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">03. Masked mean pooling</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d3"> solved</label></div>
+      <span class="pill">Tensors</span>
+      <p style="color:var(--ink);font-size:15px">Given hidden states (B, T, H) and a padding mask (B, T) with True for real tokens, return the mean over real tokens only, shape (B, H).</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Multiply by the mask, sum over T, divide by the count (clamp to avoid /0).</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 03: solution and assertions">
+import torch
+def masked_mean(h, mask):
+    m = mask.unsqueeze(-1).float()                  # (B, T, 1)
+    return (h * m).sum(1) / m.sum(1).clamp(min=1e-9)
+
+h = torch.randn(2, 4, 3); mask = torch.tensor([[1, 1, 0, 0], [1, 1, 1, 1]]).bool()
+assert torch.allclose(masked_mean(h, mask)[0], h[0, :2].mean(0))
+assert torch.allclose(masked_mean(h, mask)[1], h[1].mean(0))
+  </script></div></details>
+    </div><div class="drill card" data-cat="Tensors" id="d4" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">04. Top-k accuracy</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d4"> solved</label></div>
+      <span class="pill">Tensors</span>
+      <p style="color:var(--ink);font-size:15px">Compute top-k accuracy for logits (B, C) and targets (B,).</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>topk indices, compare with targets unsqueezed, any over k.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 04: solution and assertions">
+import torch
+def topk_accuracy(logits, y, k=3):
+    topi = logits.topk(k, dim=1).indices            # (B, k)
+    return (topi == y.unsqueeze(1)).any(dim=1).float().mean().item()
+
+logits = torch.tensor([[0.1, 0.5, 0.4], [0.9, 0.08, 0.02]]); y = torch.tensor([2, 2])
+assert topk_accuracy(logits, y, k=1) == 0.0 and topk_accuracy(logits, y, k=2) == 0.5
+  </script></div></details>
+    </div><div class="drill card" data-cat="Layers" id="d5" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">05. Linear layer from scratch</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d5"> solved</label></div>
+      <span class="pill">Layers</span>
+      <p style="color:var(--ink);font-size:15px">Write <code>MyLinear(nn.Module)</code> with Kaiming-uniform weights and zero bias, matching <code>nn.Linear</code>'s output for the same weights.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Store weights as nn.Parameter of shape (out, in); forward is x @ W.T + b.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 05: solution and assertions">
+import math, torch, torch.nn as nn
+class MyLinear(nn.Module):
+    def __init__(self, d_in, d_out):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(d_out, d_in))
+        self.bias = nn.Parameter(torch.zeros(d_out))
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))   # PyTorch's own default
+    def forward(self, x):
+        return x @ self.weight.T + self.bias
+
+m, ref = MyLinear(4, 3), nn.Linear(4, 3)
+ref.weight.data, ref.bias.data = m.weight.data.clone(), m.bias.data.clone()
+x = torch.randn(5, 4)
+assert torch.allclose(m(x), ref(x)) and sum(p.numel() for p in m.parameters()) == 15
+  </script></div></details>
+    </div><div class="drill card" data-cat="Layers" id="d6" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">06. Inverted dropout</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d6"> solved</label></div>
+      <span class="pill">Layers</span>
+      <p style="color:var(--ink);font-size:15px">Implement dropout with probability p that scales survivors by 1/(1−p) in training and is the identity in eval mode.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Bernoulli mask with keep prob 1−p; check self.training.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 06: solution and assertions">
+import torch, torch.nn as nn
+class MyDropout(nn.Module):
+    def __init__(self, p=0.5):
+        super().__init__(); self.p = p
+    def forward(self, x):
+        if not self.training or self.p == 0:
+            return x
+        mask = (torch.rand_like(x) > self.p).float()
+        return x * mask / (1 - self.p)
+
+d = MyDropout(0.3); x = torch.ones(100000)
+assert abs(d(x).mean().item() - 1.0) < 0.02          # expectation preserved
+d.eval(); assert torch.equal(d(x), x)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Layers" id="d7" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">07. BatchNorm1d with running statistics</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d7"> solved</label></div>
+      <span class="pill">Layers</span>
+      <p style="color:var(--ink);font-size:15px">Implement BatchNorm1d for (B, F) inputs: batch stats in training (updating running mean/var with momentum 0.1, unbiased var for the running estimate), running stats in eval. Match <code>nn.BatchNorm1d</code>.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>register_buffer for running stats; normalise with biased batch variance.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 07: solution and assertions">
+import torch, torch.nn as nn
+class MyBN(nn.Module):
+    def __init__(self, f, eps=1e-5, momentum=0.1):
+        super().__init__()
+        self.eps, self.mom = eps, momentum
+        self.gamma, self.beta = nn.Parameter(torch.ones(f)), nn.Parameter(torch.zeros(f))
+        self.register_buffer("rm", torch.zeros(f)); self.register_buffer("rv", torch.ones(f))
+    def forward(self, x):
+        if self.training:
+            mean, var = x.mean(0), x.var(0, unbiased=False)
+            with torch.no_grad():
+                self.rm.mul_(1 - self.mom).add_(self.mom * mean)
+                self.rv.mul_(1 - self.mom).add_(self.mom * x.var(0, unbiased=True))
+        else:
+            mean, var = self.rm, self.rv
+        return self.gamma * (x - mean) / torch.sqrt(var + self.eps) + self.beta
+
+mine, ref = MyBN(4), nn.BatchNorm1d(4)
+for _ in range(3):
+    x = torch.randn(16, 4) * 3 + 2
+    assert torch.allclose(mine(x), ref(x), atol=1e-5)
+mine.eval(); ref.eval(); x = torch.randn(5, 4)
+assert torch.allclose(mine(x), ref(x), atol=1e-5)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Layers" id="d8" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">08. LayerNorm</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d8"> solved</label></div>
+      <span class="pill">Layers</span>
+      <p style="color:var(--ink);font-size:15px">Implement LayerNorm over the last dimension with learnable gain and bias; match <code>nn.LayerNorm</code>.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Mean and biased variance over dim=-1 with keepdim.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 08: solution and assertions">
+import torch, torch.nn as nn
+class MyLN(nn.Module):
+    def __init__(self, d, eps=1e-5):
+        super().__init__(); self.eps = eps
+        self.g, self.b = nn.Parameter(torch.ones(d)), nn.Parameter(torch.zeros(d))
+    def forward(self, x):
+        mu = x.mean(-1, keepdim=True); var = x.var(-1, keepdim=True, unbiased=False)
+        return self.g * (x - mu) / torch.sqrt(var + self.eps) + self.b
+
+x = torch.randn(2, 5, 8)
+assert torch.allclose(MyLN(8)(x), nn.LayerNorm(8)(x), atol=1e-5)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Layers" id="d9" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">09. Scaled dot-product attention with mask</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d9"> solved</label></div>
+      <span class="pill">Layers</span>
+      <p style="color:var(--ink);font-size:15px">Implement attention(q, k, v, mask) for (B, h, T, d) tensors with a boolean mask (True = keep). Match <code>F.scaled_dot_product_attention</code>.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>scores = q@kᵀ/√d, masked_fill(~mask, −inf), softmax, @v.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 09: solution and assertions">
+import math, torch, torch.nn.functional as F
+def attention(q, k, v, mask=None):
+    s = q @ k.transpose(-2, -1) / math.sqrt(q.size(-1))
+    if mask is not None:
+        s = s.masked_fill(~mask, float("-inf"))
+    return s.softmax(-1) @ v
+
+B, h, T, d = 2, 4, 6, 8
+q, k, v = (torch.randn(B, h, T, d) for _ in range(3))
+causal = torch.ones(T, T, dtype=torch.bool).tril()
+assert torch.allclose(attention(q, k, v, causal), F.scaled_dot_product_attention(q, k, v, is_causal=True), atol=1e-5)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Layers" id="d10" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">10. Sinusoidal positional encoding</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d10"> solved</label></div>
+      <span class="pill">Layers</span>
+      <p style="color:var(--ink);font-size:15px">Return a (T, d) table with PE[pos, 2i] = sin(pos/10000^(2i/d)) and PE[pos, 2i+1] = cos(...).</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Build pos (T,1) and div (d/2,) then fill even/odd columns.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 10: solution and assertions">
+import math, torch
+def sinusoidal_pe(T, d):
+    pos = torch.arange(T).unsqueeze(1).float()
+    div = torch.exp(torch.arange(0, d, 2).float() * (-math.log(10000.0) / d))
+    pe = torch.zeros(T, d)
+    pe[:, 0::2] = torch.sin(pos * div); pe[:, 1::2] = torch.cos(pos * div)
+    return pe
+
+pe = sinusoidal_pe(50, 16)
+assert pe.shape == (50, 16) and torch.allclose(pe[0, 1::2], torch.ones(8))
+assert abs(pe[3, 2].item() - math.sin(3 / 10000 ** (2 / 16))) < 1e-6
+  </script></div></details>
+    </div><div class="drill card" data-cat="Layers" id="d11" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">11. Conv2d via unfold (im2col)</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d11"> solved</label></div>
+      <span class="pill">Layers</span>
+      <p style="color:var(--ink);font-size:15px">Compute a stride-1, padding-1, 3×3 convolution using <code>F.unfold</code> and a matmul; match <code>F.conv2d</code>.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>unfold → (B, C·9, L); weight → (C_out, C·9); matmul; reshape to (B, C_out, H, W).</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 11: solution and assertions">
+import torch, torch.nn.functional as F
+def conv2d_im2col(x, w, b):
+    B, C, H, W = x.shape; Co = w.shape[0]
+    cols = F.unfold(x, kernel_size=3, padding=1)            # (B, C*9, H*W)
+    out = w.view(Co, -1) @ cols + b.view(1, Co, 1)           # (B, Co, H*W)
+    return out.view(B, Co, H, W)
+
+x, w, b = torch.randn(2, 3, 8, 8), torch.randn(5, 3, 3, 3), torch.randn(5)
+assert torch.allclose(conv2d_im2col(x, w, b), F.conv2d(x, w, b, padding=1), atol=1e-5)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Training" id="d12" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">12. Custom Dataset + padding collate</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d12"> solved</label></div>
+      <span class="pill">Training</span>
+      <p style="color:var(--ink);font-size:15px">Write a Dataset over variable-length integer sequences with labels, and a collate_fn returning (padded, lengths, labels).</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>pad_sequence(batch_first=True); lengths as a LongTensor.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 12: solution and assertions">
+import torch
+from torch.utils.data import Dataset, DataLoader
+from torch.nn.utils.rnn import pad_sequence
+class SeqDS(Dataset):
+    def __init__(self, seqs, ys): self.seqs, self.ys = seqs, ys
+    def __len__(self): return len(self.seqs)
+    def __getitem__(self, i): return torch.tensor(self.seqs[i]), torch.tensor(self.ys[i])
+def collate(batch):
+    xs, ys = zip(*batch)
+    return pad_sequence(xs, batch_first=True), torch.tensor([len(x) for x in xs]), torch.stack(ys)
+
+dl = DataLoader(SeqDS([[1, 2, 3], [4], [5, 6]], [0, 1, 0]), batch_size=3, collate_fn=collate)
+x, lens, y = next(iter(dl))
+assert x.shape == (3, 3) and lens.tolist() == [3, 1, 2] and x[1].tolist() == [4, 0, 0]
+  </script></div></details>
+    </div><div class="drill card" data-cat="Training" id="d13" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">13. Training loop with early stopping</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d13"> solved</label></div>
+      <span class="pill">Training</span>
+      <p style="color:var(--ink);font-size:15px">Train a model on (X, y) with validation; stop after <code>patience</code> epochs without improvement and restore the best weights.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Track best loss, deepcopy state_dict, counter.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 13: solution and assertions">
+import copy, torch, torch.nn as nn
+def train(model, Xtr, ytr, Xva, yva, epochs=1000, patience=20, lr=5e-2):
+    opt = torch.optim.Adam(model.parameters(), lr); loss_fn = nn.MSELoss()
+    best, best_state, bad = float("inf"), None, 0
+    for ep in range(epochs):
+        model.train(); opt.zero_grad(); loss_fn(model(Xtr), ytr).backward(); opt.step()
+        model.eval()
+        with torch.no_grad(): v = loss_fn(model(Xva), yva).item()
+        if v < best: best, best_state, bad = v, copy.deepcopy(model.state_dict()), 0
+        else:
+            bad += 1
+            if bad >= patience: break
+    model.load_state_dict(best_state)
+    return best, ep
+
+torch.manual_seed(0); X = torch.randn(300, 3); y = X @ torch.tensor([[1.], [-2.], [0.5]])
+m = nn.Linear(3, 1); best, stopped = train(m, X[:200], y[:200], X[200:], y[200:])
+assert best < 5e-3, best          # started around 5; the model recovered the true weights
+  </script></div></details>
+    </div><div class="drill card" data-cat="Training" id="d14" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">14. Gradient accumulation</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d14"> solved</label></div>
+      <span class="pill">Training</span>
+      <p style="color:var(--ink);font-size:15px">Show that accumulating gradients over 4 micro-batches of 8 (loss divided by 4) gives the same gradient as one batch of 32.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Call backward on loss/4 each micro-batch; compare .grad.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 14: solution and assertions">
+import torch, torch.nn as nn
+torch.manual_seed(0)
+X, y = torch.randn(32, 5), torch.randn(32, 1)
+m1 = nn.Linear(5, 1); m2 = nn.Linear(5, 1); m2.load_state_dict(m1.state_dict())
+nn.MSELoss()(m1(X), y).backward()                          # full batch
+for i in range(4):                                          # 4 micro-batches
+    xb, yb = X[i*8:(i+1)*8], y[i*8:(i+1)*8]
+    (nn.MSELoss()(m2(xb), yb) / 4).backward()
+assert torch.allclose(m1.weight.grad, m2.weight.grad, atol=1e-6)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Training" id="d15" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">15. Freeze a backbone</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d15"> solved</label></div>
+      <span class="pill">Training</span>
+      <p style="color:var(--ink);font-size:15px">Freeze everything except the final layer of a small network and verify only the head's parameters are trainable and change after a step.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>requires_grad=False; filter params for the optimizer.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 15: solution and assertions">
+import torch, torch.nn as nn
+net = nn.Sequential(nn.Linear(8, 16), nn.ReLU(), nn.Linear(16, 16), nn.ReLU(), nn.Linear(16, 2))
+for p in net.parameters(): p.requires_grad = False
+for p in net[-1].parameters(): p.requires_grad = True
+trainable = [p for p in net.parameters() if p.requires_grad]
+assert sum(p.numel() for p in trainable) == 16 * 2 + 2
+before = net[0].weight.clone(); head_before = net[-1].weight.clone()
+opt = torch.optim.SGD(trainable, lr=0.1)
+nn.CrossEntropyLoss()(net(torch.randn(4, 8)), torch.tensor([0, 1, 0, 1])).backward(); opt.step()
+assert torch.equal(before, net[0].weight) and not torch.equal(head_before, net[-1].weight)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Training" id="d16" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">16. Gradient clipping by global norm</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d16"> solved</label></div>
+      <span class="pill">Training</span>
+      <p style="color:var(--ink);font-size:15px">Implement clip_grad_norm(params, max_norm) that rescales all gradients so their combined L2 norm ≤ max_norm; return the original norm. Match PyTorch.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>total = sqrt(sum of squared grad norms); scale = max_norm / (total + 1e-6) if > 1.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 16: solution and assertions">
+import torch, torch.nn as nn
+def clip_grad_norm(params, max_norm):
+    params = [p for p in params if p.grad is not None]
+    total = torch.sqrt(sum(p.grad.pow(2).sum() for p in params))
+    scale = max_norm / (total + 1e-6)
+    if scale < 1:
+        for p in params: p.grad.mul_(scale)
+    return total
+
+torch.manual_seed(0); a, b = nn.Linear(10, 10), nn.Linear(10, 10); b.load_state_dict(a.state_dict())
+x = torch.randn(4, 10) * 50
+a(x).sum().backward(); b(x).sum().backward()
+n1 = clip_grad_norm(a.parameters(), 1.0); n2 = torch.nn.utils.clip_grad_norm_(b.parameters(), 1.0)
+assert torch.allclose(n1, n2) and torch.allclose(a.weight.grad, b.weight.grad, atol=1e-6)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Training" id="d17" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">17. Adam step from scratch</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d17"> solved</label></div>
+      <span class="pill">Training</span>
+      <p style="color:var(--ink);font-size:15px">Implement one Adam update (with bias correction) and verify it matches <code>torch.optim.Adam</code> over 5 steps.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>m = β1·m + (1−β1)g; v = β2·v + (1−β2)g²; w −= lr·m̂/(√v̂ + eps).</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 17: solution and assertions">
+import torch
+torch.manual_seed(0)
+w1 = torch.randn(5, requires_grad=True); w2 = w1.detach().clone().requires_grad_(True)
+opt = torch.optim.Adam([w2], lr=0.1)
+m = torch.zeros(5); v = torch.zeros(5); b1, b2, eps, lr = 0.9, 0.999, 1e-8, 0.1
+for t in range(1, 6):
+    (w1 ** 2).sum().backward(); (w2 ** 2).sum().backward()
+    with torch.no_grad():
+        g = w1.grad
+        m = b1 * m + (1 - b1) * g; v = b2 * v + (1 - b2) * g * g
+        m_hat, v_hat = m / (1 - b1 ** t), v / (1 - b2 ** t)
+        w1 -= lr * m_hat / (v_hat.sqrt() + eps)
+    w1.grad.zero_(); opt.step(); opt.zero_grad()
+assert torch.allclose(w1, w2, atol=1e-6)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Training" id="d18" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">18. Warm-up + cosine schedule</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d18"> solved</label></div>
+      <span class="pill">Training</span>
+      <p style="color:var(--ink);font-size:15px">Build a LambdaLR that warms up linearly for <code>warmup</code> steps and then decays with a cosine to 0 at <code>total</code> steps.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Return a multiplier: step/warmup, then 0.5(1+cos(π·progress)).</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 18: solution and assertions">
+import math, torch
+def warmup_cosine(opt, warmup, total):
+    def f(step):
+        if step < warmup: return (step + 1) / warmup
+        prog = (step - warmup) / max(1, total - warmup)
+        return 0.5 * (1 + math.cos(math.pi * min(1.0, prog)))
+    return torch.optim.lr_scheduler.LambdaLR(opt, f)
+
+opt = torch.optim.SGD([torch.zeros(1, requires_grad=True)], lr=1.0)
+sched = warmup_cosine(opt, warmup=10, total=110); lrs = []
+for _ in range(110): lrs.append(opt.param_groups[0]["lr"]); opt.step(); sched.step()
+assert abs(lrs[0] - 0.1) < 1e-9 and abs(lrs[9] - 1.0) < 1e-9 and lrs[-1] < 0.01
+  </script></div></details>
+    </div><div class="drill card" data-cat="Losses" id="d19" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">19. Focal loss</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d19"> solved</label></div>
+      <span class="pill">Losses</span>
+      <p style="color:var(--ink);font-size:15px">Binary focal loss FL = −α_t(1−p_t)^γ log(p_t) from logits; with γ=0 and α=0.5 it must equal 0.5·BCE.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Use BCE-with-logits (reduction none) for −log p_t, then p_t = exp(−bce).</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 19: solution and assertions">
+import torch, torch.nn.functional as F
+def focal_loss(logits, y, alpha=0.25, gamma=2.0):
+    bce = F.binary_cross_entropy_with_logits(logits, y, reduction="none")
+    p_t = torch.exp(-bce)
+    a_t = alpha * y + (1 - alpha) * (1 - y)
+    return (a_t * (1 - p_t) ** gamma * bce).mean()
+
+z, y = torch.randn(64), torch.randint(0, 2, (64,)).float()
+assert torch.allclose(focal_loss(z, y, alpha=0.5, gamma=0.0), 0.5 * F.binary_cross_entropy_with_logits(z, y))
+easy = torch.tensor([6.0]); assert focal_loss(easy, torch.ones(1)) < 1e-4   # easy examples ~ ignored
+  </script></div></details>
+    </div><div class="drill card" data-cat="Autograd" id="d20" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">20. Custom autograd Function: gradient reversal</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d20"> solved</label></div>
+      <span class="pill">Autograd</span>
+      <p style="color:var(--ink);font-size:15px">Implement a layer that is the identity in forward and multiplies gradients by −λ in backward (used in domain adaptation).</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Save λ on ctx; backward returns −λ·grad and None for λ.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 20: solution and assertions">
+import torch
+class GradReverse(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, lam):
+        ctx.lam = lam
+        return x.view_as(x)
+    @staticmethod
+    def backward(ctx, g):
+        return -ctx.lam * g, None
+
+x = torch.randn(4, requires_grad=True)
+GradReverse.apply(x, 0.5).sum().backward()
+assert torch.allclose(x.grad, torch.full((4,), -0.5))
+  </script></div></details>
+    </div><div class="drill card" data-cat="Autograd" id="d21" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">21. Gradient penalty with autograd.grad</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d21"> solved</label></div>
+      <span class="pill">Autograd</span>
+      <p style="color:var(--ink);font-size:15px">Compute ‖∂f/∂x‖ for a model output w.r.t. its input and backprop through it (as in WGAN-GP).</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>torch.autograd.grad(..., create_graph=True).</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 21: solution and assertions">
+import torch, torch.nn as nn
+f = nn.Sequential(nn.Linear(3, 8), nn.Tanh(), nn.Linear(8, 1))
+x = torch.randn(16, 3, requires_grad=True)
+(g,) = torch.autograd.grad(f(x).sum(), x, create_graph=True)
+penalty = ((g.norm(dim=1) - 1) ** 2).mean()
+penalty.backward()                                   # second-order gradient flows to the weights
+assert f[0].weight.grad is not None and penalty.item() >= 0
+  </script></div></details>
+    </div><div class="drill card" data-cat="Sequences" id="d22" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">22. LSTM classifier using the correct last state</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d22"> solved</label></div>
+      <span class="pill">Sequences</span>
+      <p style="color:var(--ink);font-size:15px">Build a many-to-one LSTM classifier for padded batches that uses the true last hidden state of each sequence (via packing). Check that padding does not change the output.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>pack_padded_sequence + h_n[-1].</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 22: solution and assertions">
+import torch, torch.nn as nn
+from torch.nn.utils.rnn import pack_padded_sequence
+class LSTMCls(nn.Module):
+    def __init__(self):
+        super().__init__(); self.lstm = nn.LSTM(4, 16, batch_first=True); self.head = nn.Linear(16, 1)
+    def forward(self, x, lengths):
+        _, (h, _) = self.lstm(pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False))
+        return self.head(h[-1]).squeeze(-1)
+
+torch.manual_seed(0); m = LSTMCls().eval()
+seq = torch.randn(1, 3, 4)
+padded = torch.cat([seq, torch.randn(1, 5, 4)], dim=1)     # same sequence + 5 garbage steps
+assert torch.allclose(m(seq, torch.tensor([3])), m(padded, torch.tensor([3])), atol=1e-6)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Sequences" id="d23" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">23. Multi-head reshape</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d23"> solved</label></div>
+      <span class="pill">Sequences</span>
+      <p style="color:var(--ink);font-size:15px">Split (B, T, d_model) into (B, h, T, d_k) heads and merge back; verify the round trip is exact.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>view(B, T, h, d_k).transpose(1, 2); reverse with transpose + contiguous + view.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 23: solution and assertions">
+import torch
+def split_heads(x, h):
+    B, T, D = x.shape
+    return x.view(B, T, h, D // h).transpose(1, 2)          # (B, h, T, d_k)
+def merge_heads(x):
+    B, h, T, dk = x.shape
+    return x.transpose(1, 2).contiguous().view(B, T, h * dk)
+
+x = torch.randn(2, 7, 32)
+assert split_heads(x, 4).shape == (2, 4, 7, 8) and torch.equal(merge_heads(split_heads(x, 4)), x)
+  </script></div></details>
+    </div><div class="drill card" data-cat="Evaluation" id="d24" style="margin:14px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><h4 style="margin:0">24. AUC from scratch</h4><label style="font-size:13px;color:var(--muted);white-space:nowrap"><input type="checkbox" class="solved" data-id="d24"> solved</label></div>
+      <span class="pill">Evaluation</span>
+      <p style="color:var(--ink);font-size:15px">Compute ROC-AUC as the probability that a random positive is scored above a random negative (ties count ½); match scikit-learn.</p>
+      <details class="qa"><summary>Hint</summary><div class="ans"><p>Compare all positive–negative pairs with broadcasting.</p></div></details>
+      <details class="qa"><summary>Solution + tests (verified)</summary><div class="ans">
+  <script type="text/plain" class="snippet" data-title="drill 24: solution and assertions">
+import torch
+from sklearn.metrics import roc_auc_score
+def auc(scores, y):
+    pos, neg = scores[y == 1], scores[y == 0]
+    diff = pos.unsqueeze(1) - neg.unsqueeze(0)               # (P, N)
+    return ((diff > 0).float() + 0.5 * (diff == 0).float()).mean().item()
+
+torch.manual_seed(0); y = torch.randint(0, 2, (300,)); s = torch.randn(300) + y
+assert abs(auc(s, y) - roc_auc_score(y.numpy(), s.numpy())) < 1e-6
+  </script></div></details>
+    </div>
+</main>
+<script>
+(function(){
+  const S=DLP_STORE,key='dlp-drills';let st=S.get(key,{}),cat='All';
+  const boxes=[...document.querySelectorAll('.solved')];
+  boxes.forEach(b=>{b.checked=!!st[b.dataset.id];b.addEventListener('change',()=>{st[b.dataset.id]=b.checked;S.set(key,st);count();});});
+  function count(){const n=boxes.filter(b=>b.checked).length;document.getElementById('dcount').textContent=`${n} / ${boxes.length} solved`;}
+  const fil=document.getElementById('dfil');
+  function apply(){[...fil.children].forEach(b=>b.classList.toggle('on',b.dataset.c===cat));document.querySelectorAll('.drill').forEach(d=>d.style.display=(cat==='All'||d.dataset.cat===cat)?'':'none');}
+  [...fil.children].forEach(b=>b.onclick=()=>{cat=b.dataset.c;apply();});
+  apply();count();
+})();
+</script>
+</body>
+</html>

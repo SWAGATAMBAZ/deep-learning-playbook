@@ -12,7 +12,7 @@
   <h1>LSTM in depth</h1>
   <p class="lede">The LSTM (Hochreiter &amp; Schmidhuber, 1997) fixed the vanilla RNN's amnesia by adding a separate <b>cell state</b> and three learnable <b>gates</b> that decide what to forget, what to write and what to reveal. It was the default sequence model for two decades and still powers many streaming and on-device systems.</p>
   <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Three-part series</div><p><a href="rnn.html">I. RNN</a> (read first: BPTT, vanishing gradients, shapes) → <b>II. LSTM</b> (this page) → <a href="gru.html">III. GRU</a> (lighter alternative + LSTM vs GRU).</p></div>
-  <div class="toc"><a href="#problem">The problem it solves</a><a href="#intuition">Intuition</a><a href="#gates">The gates</a><a href="#sim">Cell simulator</a><a href="#why">Why gradients survive</a><a href="#params">Parameters</a><a href="#torch">PyTorch API</a><a href="#variants">Variants</a><a href="#hp">Hyperparameters</a><a href="#improve">Improving performance</a><a href="#bugs">Common bugs</a><a href="#industry">Industry uses</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#problem">The problem it solves</a><a href="#intuition">Intuition</a><a href="#gates">The gates</a><a href="#sim">Cell simulator</a><a href="#why">Why gradients survive</a><a href="#params">Parameters</a><a href="#torch">PyTorch API</a><a href="#variants">Variants</a><a href="#hp">Hyperparameters</a><a href="#improve">Improving performance</a><a href="#bugs">Common bugs</a><a href="#industry">Industry uses</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="problem">The problem LSTM solves</h2>
   <div class="callout layman"><div class="tag">🧒 In plain English</div><p>"The customer, who opened her account in <b>Pune</b> in 2019 and has since made hundreds of small UPI payments, salary credits and bill payments, just made a card purchase in São Paulo." To flag this you must remember <b>Pune</b> across hundreds of steps of irrelevant activity. A vanilla RNN overwrites its memory at every step, so after ~10–20 steps the early information (and its gradient) is gone. The LSTM adds a protected memory lane that keeps information until the model decides to drop it.</p></div>
@@ -242,6 +242,29 @@
 
     head = nn.Linear(64, 1)
     print(round(on_new_event("cust_42", torch.randn(20), head), 3))
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Plot the gate activations of a real LSTM</h2>
+  <p>Unroll an <code>nn.LSTMCell</code> step by step and record the input, forget and output gates. In a trained model you'll see forget gates near 1 on units that carry long-term memory and input gates opening on informative events. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: plot the gate activations of a real lstm">
+import torch, torch.nn as nn, matplotlib.pyplot as plt
+torch.manual_seed(0)
+H = 12; cell = nn.LSTMCell(1, H)
+x = torch.zeros(30, 1, 1); x[3] = 2.0; x[18] = -2.0
+h = c = torch.zeros(1, H); gates = {"input i": [], "forget f": [], "output o": []}; cells = []
+with torch.no_grad():
+    for t in range(30):
+        z = x[t] @ cell.weight_ih.T + h @ cell.weight_hh.T + cell.bias_ih + cell.bias_hh
+        i, f, g, o = z.chunk(4, 1)
+        i, f, g, o = i.sigmoid(), f.sigmoid(), g.tanh(), o.sigmoid()
+        c = f * c + i * g; h = o * c.tanh()
+        for k, v in zip(gates, (i, f, o)): gates[k].append(v[0])
+        cells.append(c[0])
+fig, ax = plt.subplots(1, 4, figsize=(15, 3.2), sharey=True)
+for a, (k, v) in zip(ax, list(gates.items()) + [("cell state c", cells)]):
+    im = a.imshow(torch.stack(v).T, aspect="auto", cmap="viridis" if k != "cell state c" else "RdBu_r")
+    a.set_title(k); a.set_xlabel("time"); plt.colorbar(im, ax=a)
+ax[0].set_ylabel("unit"); plt.tight_layout(); plt.savefig("lstm_gates.png", dpi=110); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

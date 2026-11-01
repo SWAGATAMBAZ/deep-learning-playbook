@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PyTorch I · Tensors & autograd · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+<style>.shapein{font:15px var(--mono);padding:8px 11px;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--ink);width:100%}.bc{font-family:var(--mono);font-size:15px;line-height:1.9;overflow-x:auto}.bc span{display:inline-block;min-width:44px;text-align:center;border-radius:6px;margin:0 2px;padding:0 4px}.ok{background:var(--green-soft);color:var(--green)}.bad{background:var(--coral-soft);color:var(--coral)}.st{background:var(--amber-soft);color:var(--amber)}.ghost{color:var(--muted)}#sOp{width:100%;padding:8px 10px}</style>
+</head>
+<body data-page="pt-tensors">
+<main>
+  <div class="eyebrow">PyTorch track · Part I · Week 1</div>
+  <h1>PyTorch I: Tensors &amp; autograd</h1>
+  <p class="lede">Everything in PyTorch is a <b>tensor</b> (an n-dimensional array that can live on a GPU) plus <b>autograd</b> (a system that records operations and computes gradients for you). Master these two and every model on this site is just tensors flowing through functions.</p>
+  <div class="callout win" style="margin:6px 0 4px"><div class="tag">🔥 The PyTorch track</div><p><b>I. Tensors &amp; autograd</b> (this page) → <a href="pt-training.html">II. Modules, data &amp; the training loop</a> → <a href="pt-performance.html">III. Speed, memory &amp; scale</a> → <a href="visualization.html">Visualisation &amp; debugging toolkit</a> → <a href="pt-drills.html">Coding drills</a>.</p></div>
+  <div class="toc"><a href="#why">Why PyTorch</a><a href="#create">Creating tensors</a><a href="#dtype">dtype &amp; device</a><a href="#shape">Shape ops</a><a href="#shapelab">Shape lab</a><a href="#broadcast">Broadcasting</a><a href="#index">Indexing</a><a href="#math">Math &amp; einsum</a><a href="#autograd">Autograd</a><a href="#graph">Graph live</a><a href="#advanced">Advanced autograd</a><a href="#pitfalls">Pitfalls</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="why">Why PyTorch</h2>
+  <div class="grid">
+    <div class="card"><h4>Pythonic and eager</h4><p>Code runs line by line like NumPy, so you can debug with <code>print</code> and breakpoints. <code>torch.compile</code> adds compiler speed when you want it.</p></div>
+    <div class="card"><h4>The ecosystem</h4><p>Hugging Face, timm, torchvision, Ultralytics, PyG, Lightning and most research code are PyTorch-first.</p></div>
+    <div class="card"><h4>Interview reality</h4><p>DS coding rounds increasingly ask you to write a training loop, a custom Dataset, or attention in PyTorch from memory. The <a href="pt-drills.html">drills</a> page trains exactly that.</p></div>
+  </div>
+
+  <h2 id="create">Creating tensors</h2>
+  <script type="text/plain" class="snippet" data-title="the creation functions you'll use 95% of the time">
+    import torch, numpy as np
+
+    a = torch.tensor([[1., 2.], [3., 4.]])        # from data (copies)
+    z = torch.zeros(2, 3); o = torch.ones(2, 3); e = torch.empty(2, 3)   # empty = uninitialised!
+    r = torch.randn(4, 5)                          # N(0,1);  torch.rand -> U(0,1)
+    i = torch.randint(0, 10, (3,))                 # integers in [0, 10)
+    s = torch.arange(0, 10, 2); l = torch.linspace(0, 1, 5)
+    eye = torch.eye(3)
+    like = torch.zeros_like(r)                     # same shape, dtype, device as r
+
+    n = np.ones(3)
+    t = torch.from_numpy(n)                        # SHARES memory with n
+    n[0] = 99; print(t[0])                         # tensor(99., dtype=torch.float64)
+    back = t.numpy()                               # also shared (CPU only); use .detach().cpu().numpy() in general
+    print(a.shape, a.dtype, a.device, a.ndim, a.numel())
+  </script>
+
+  <h2 id="dtype">dtype and device</h2>
+  <div class="table-wrap"><table>
+    <tr><th>dtype</th><th>Bytes</th><th>Use for</th><th>Gotcha</th></tr>
+    <tr><td><code>float32</code></td><td>4</td><td>Default for weights and inputs</td><td>NumPy defaults to float64; convert with <code>.float()</code></td></tr>
+    <tr><td><code>bfloat16</code></td><td>2</td><td>Mixed-precision training on modern GPUs (same exponent range as fp32)</td><td>Fewer mantissa bits, so it's less precise</td></tr>
+    <tr><td><code>float16</code></td><td>2</td><td>Mixed precision on older GPUs, inference</td><td>Small range: needs a GradScaler in training</td></tr>
+    <tr><td><code>int64</code> (long)</td><td>8</td><td>Class labels for CrossEntropyLoss, embedding indices</td><td>CE wants long targets; BCE wants float targets</td></tr>
+    <tr><td><code>bool</code></td><td>1</td><td>Masks</td><td>Use <code>~mask</code>, not <code>1 - mask</code></td></tr>
+  </table></div>
+  <script type="text/plain" class="snippet" data-title="devices">
+    device = ("cuda" if torch.cuda.is_available()
+              else "mps" if torch.backends.mps.is_available() else "cpu")   # Apple silicon -> mps
+    x = torch.randn(3, 3, device=device)          # create directly on the device (faster than .to)
+    y = x.to("cpu", torch.float64)                # move and cast in one call
+    # Rule: model AND every input tensor must be on the same device,
+    # or you get "Expected all tensors to be on the same device".
+  </script>
+
+  <h2 id="shape">Shape operations</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Op</th><th>What it does</th><th>Memory</th></tr>
+    <tr><td><code>view(*shape)</code></td><td>Reinterpret the same memory with a new shape</td><td>No copy; needs a <b>contiguous</b> tensor</td></tr>
+    <tr><td><code>reshape(*shape)</code></td><td>Like view, but copies if it has to</td><td>Copy only if needed</td></tr>
+    <tr><td><code>permute(dims)</code> / <code>transpose(a, b)</code></td><td>Reorder axes, e.g. image (B,H,W,C) → (B,C,H,W)</td><td>No copy, but the result is <b>non-contiguous</b></td></tr>
+    <tr><td><code>contiguous()</code></td><td>Lay the data out in row-major order</td><td>Copies if needed; call before <code>view</code> after a permute</td></tr>
+    <tr><td><code>unsqueeze(d)</code> / <code>squeeze(d)</code></td><td>Add / remove a size-1 axis</td><td>No copy</td></tr>
+    <tr><td><code>flatten(start, end)</code></td><td>Merge axes, e.g. (B,C,H,W) → (B, C·H·W)</td><td>View when possible</td></tr>
+    <tr><td><code>cat(ts, dim)</code> vs <code>stack(ts, dim)</code></td><td>Join along an <b>existing</b> axis vs a <b>new</b> axis</td><td>Copy</td></tr>
+    <tr><td><code>expand</code> vs <code>repeat</code></td><td>Broadcast-style virtual copy vs real copy</td><td>expand: none; repeat: copies</td></tr>
+  </table></div>
+
+  <h2 id="shapelab">Shape lab</h2>
+  <div class="widget">
+    <div class="widget-title">Predict the output shape, then check</div>
+    <div class="widget-sub">Enter a tensor shape, pick an operation and its argument. This is exactly the mental model you need when debugging "size mismatch" errors.</div>
+    <div class="controls">
+      <div class="control"><label>input shape</label><input class="shapein" id="sIn" value="8, 3, 32, 32"></div>
+      <div class="control"><label>operation</label><select id="sOp">
+        <option value="view">view / reshape</option><option value="permute">permute</option><option value="transpose">transpose(a, b)</option>
+        <option value="unsqueeze">unsqueeze(dim)</option><option value="squeeze">squeeze(dim)</option><option value="flatten">flatten(start_dim)</option>
+        <option value="sum">sum(dim)</option><option value="sumk">sum(dim, keepdim=True)</option><option value="mean">mean(dim)</option>
+        <option value="matmul">x @ W  (W shape below)</option><option value="linear">nn.Linear(in, out) → out</option><option value="conv">nn.Conv2d(k=3, pad=1, stride) → C_out</option></select></div>
+      <div class="control"><label>argument</label><input class="shapein" id="sArg" value="8, -1"></div>
+    </div>
+    <div class="readout" id="sOut"></div>
+    <div style="margin-top:8px;font-size:13px;color:var(--muted)">Argument examples: view <code>8, -1</code> · permute <code>0, 2, 3, 1</code> · transpose <code>1, 2</code> · sum <code>1</code> · matmul <code>1024, 10</code> · Linear <code>3072, 10</code> · Conv2d <code>64, 2</code> (C_out, stride)</div>
+  </div>
+
+  <h2 id="broadcast">Broadcasting</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>PyTorch lets you add a (3,) vector to a (4, 3) matrix without copying it four times. It lines up shapes <b>from the right</b>. Two sizes are compatible if they're equal, or one of them is 1 (that one gets "stretched"). A missing dimension counts as 1.</p></div>
+  <div class="widget">
+    <div class="widget-title">Broadcasting checker</div>
+    <div class="controls"><div class="control"><label>shape A</label><input class="shapein" id="bA" value="32, 1, 5"></div><div class="control"><label>shape B</label><input class="shapein" id="bB" value="4, 5"></div></div>
+    <div class="bc" id="bOut"></div>
+    <div style="margin-top:8px;font-size:13px;color:var(--muted)">Try: <code>8,3,32,32</code> + <code>3,1,1</code> (per-channel normalise) · <code>64,10</code> + <code>64</code> (the classic bug) · <code>64,10</code> + <code>64,1</code></div>
+  </div>
+  <div class="callout trap"><div class="tag">⚠️ Silent broadcasting bug</div><p><code>pred</code> shape (64, 1) minus <code>y</code> shape (64,) broadcasts to <b>(64, 64)</b>, so your MSE is computed over 4,096 wrong pairs without any error. Always <code>squeeze(-1)</code> predictions or <code>assert pred.shape == y.shape</code>.</p></div>
+
+  <h2 id="index">Indexing, masking, gather</h2>
+  <script type="text/plain" class="snippet" data-title="indexing patterns that come up constantly">
+    x = torch.arange(12).view(3, 4)
+    x[0], x[:, 1], x[..., -1], x[1:, ::2]          # rows, cols, last col, slices
+    mask = x > 5
+    x[mask]                                          # 1-D tensor of selected values
+    x.masked_fill(mask, 0)                           # replace where mask is True
+    torch.where(mask, x, -x)                         # element-wise if/else
+
+    # pick each row's true-class probability (used inside cross-entropy)
+    probs = torch.softmax(torch.randn(4, 3), dim=1)
+    y = torch.tensor([2, 0, 1, 2])
+    p_true = probs.gather(1, y.unsqueeze(1)).squeeze(1)   # == probs[torch.arange(4), y]
+
+    topv, topi = probs.topk(2, dim=1)                # top-k values and indices
+    idx = torch.argsort(probs[:, 0], descending=True)
+  </script>
+
+  <h2 id="math">Math, reductions and einsum</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Operation</th><th>Shapes</th><th>Notes</th></tr>
+    <tr><td><code>a * b</code></td><td>broadcast</td><td>Element-wise (Hadamard) product</td></tr>
+    <tr><td><code>a @ b</code> / <code>torch.matmul</code></td><td>(n,k)@(k,m) → (n,m); batched (B,n,k)@(B,k,m)</td><td>Leading dims broadcast</td></tr>
+    <tr><td><code>x.sum(dim=1, keepdim=True)</code></td><td>(B,C) → (B,1)</td><td>keepdim keeps it broadcastable back against x</td></tr>
+    <tr><td><code>torch.einsum("bhqd,bhkd->bhqk", q, k)</code></td><td>attention scores</td><td>Name each axis; repeated letters are multiplied and summed over</td></tr>
+  </table></div>
+  <script type="text/plain" class="snippet" data-title="einsum: one notation for most tensor algebra">
+    a, b = torch.randn(5, 3), torch.randn(3, 4)
+    assert torch.allclose(torch.einsum("ik,kj->ij", a, b), a @ b)          # matmul
+    v = torch.randn(5)
+    print(torch.einsum("i,i->", v, v), torch.einsum("i,j->ij", v, v).shape) # dot, outer
+    q, k = torch.randn(2, 8, 10, 16), torch.randn(2, 8, 12, 16)
+    scores = torch.einsum("bhqd,bhkd->bhqk", q, k)                          # (2, 8, 10, 12)
+    print(scores.shape)
+  </script>
+
+  <h2 id="autograd">Autograd: how gradients happen</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>When a tensor has <code>requires_grad=True</code>, PyTorch keeps a receipt of every operation done to it: the <b>computation graph</b>. Calling <code>loss.backward()</code> walks the receipts backwards with the chain rule and writes ∂loss/∂parameter into each parameter's <code>.grad</code>. The graph is rebuilt on every forward pass (it's <b>dynamic</b>), which is why plain Python <code>if</code>s and loops work inside models.</p></div>
+  <div class="table-wrap"><table>
+    <tr><th>Concept</th><th>Meaning</th></tr>
+    <tr><td>Leaf tensor</td><td>Created by you (e.g. parameters). Its <code>.grad</code> is populated after backward.</td></tr>
+    <tr><td><code>grad_fn</code></td><td>The backward function attached to non-leaf results (e.g. <code>MulBackward0</code>)</td></tr>
+    <tr><td><code>.backward()</code></td><td>Only on a scalar, or pass <code>gradient=</code> for non-scalars. Frees the graph afterwards unless <code>retain_graph=True</code>.</td></tr>
+    <tr><td>Accumulation</td><td><code>.grad</code> <b>adds up</b> across backward calls, hence <code>optimizer.zero_grad()</code> each step</td></tr>
+    <tr><td><code>torch.no_grad()</code> / <code>torch.inference_mode()</code></td><td>Don't record the graph (evaluation, inference). inference_mode is faster but its tensors can't be used in autograd later.</td></tr>
+    <tr><td><code>.detach()</code></td><td>Same data, cut out of the graph (stop gradients, e.g. target networks, logging)</td></tr>
+  </table></div>
+
+  <h2 id="graph">Computation graph, live</h2>
+  <div class="widget">
+    <div class="widget-title">Forward values and backward gradients for L = (w·x + b − y)²</div>
+    <div class="widget-sub">Move the sliders. Blue numbers are the forward pass, red numbers are the gradients autograd computes on the way back. These are exactly what <code>w.grad</code> and <code>b.grad</code> will contain.</div>
+    <div class="controls">
+      <div class="control"><label>x (input) <b id="gxv"></b></label><input type="range" id="gx" min="-3" max="3" step="0.1" value="2"></div>
+      <div class="control"><label>w (weight) <b id="gwv"></b></label><input type="range" id="gw" min="-3" max="3" step="0.1" value="0.5"></div>
+      <div class="control"><label>b (bias) <b id="gbv"></b></label><input type="range" id="gb" min="-3" max="3" step="0.1" value="0.3"></div>
+      <div class="control"><label>y (target) <b id="gyv"></b></label><input type="range" id="gy" min="-3" max="3" step="0.1" value="2"></div>
+    </div>
+    <svg id="gsvg" viewBox="0 0 760 210" style="width:100%;height:auto"></svg>
+    <div class="readout" id="gout"></div>
+  </div>
+  <script type="text/plain" class="snippet" data-title="the same graph in PyTorch">
+    x, y = torch.tensor(2.0), torch.tensor(2.0)
+    w = torch.tensor(0.5, requires_grad=True)
+    b = torch.tensor(0.3, requires_grad=True)
+    z = w * x + b            # grad_fn=<AddBackward0>
+    L = (z - y) ** 2         # grad_fn=<PowBackward0>
+    L.backward()
+    print(L.item(), w.grad.item(), b.grad.item())   # 0.49, -2.8, -1.4
+    # dL/dz = 2(z-y) = -1.4 ; dL/dw = dL/dz * x = -2.8 ; dL/db = dL/dz * 1 = -1.4
+  </script>
+
+  <h2 id="advanced">Advanced autograd you should know</h2>
+  <script type="text/plain" class="snippet" data-title="torch.autograd.grad, hooks, custom Function, gradcheck">
+    import torch
+
+    # 1) gradients without touching .grad (gradient penalties, meta-learning)
+    x = torch.randn(4, 3, requires_grad=True)
+    y = (x ** 3).sum()
+    (gx,) = torch.autograd.grad(y, x, create_graph=True)   # keep graph for 2nd derivative
+    (gxx,) = torch.autograd.grad(gx.sum(), x)                # d2y/dx2 = 6x
+    assert torch.allclose(gxx, 6 * x)
+
+    # 2) hooks: inspect or modify gradients flowing through a tensor
+    h = torch.randn(3, requires_grad=True)
+    h.register_hook(lambda g: print("grad norm", g.norm().item()))
+    (h * 2).sum().backward()
+
+    # 3) custom autograd Function: straight-through estimator for rounding
+    class RoundSTE(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, inp):
+            return inp.round()
+        @staticmethod
+        def backward(ctx, grad_out):
+            return grad_out                 # pretend round() is the identity for gradients
+
+    v = torch.tensor([0.4, 1.6], requires_grad=True)
+    RoundSTE.apply(v).sum().backward()
+    print(v.grad)                           # tensor([1., 1.]) instead of zeros
+
+    # 4) check a custom backward numerically (double precision)
+    class Square(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, a): ctx.save_for_backward(a); return a * a
+        @staticmethod
+        def backward(ctx, g): (a,) = ctx.saved_tensors; return 2 * a * g
+    print(torch.autograd.gradcheck(Square.apply, (torch.randn(5, dtype=torch.double, requires_grad=True),)))
+  </script>
+
+  <h2 id="pitfalls">Tensor and autograd pitfalls</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Mistake</th><th>What happens</th><th>Fix</th></tr>
+    <tr><td>Forgetting <code>zero_grad()</code></td><td>Gradients add up across steps, so training diverges</td><td><code>opt.zero_grad(set_to_none=True)</code> every step</td></tr>
+    <tr><td>In-place op on a tensor needed for backward (<code>x += 1</code>, <code>relu_</code>)</td><td>"one of the variables needed for gradient computation has been modified by an inplace operation"</td><td>Use the out-of-place version</td></tr>
+    <tr><td><code>loss_total += loss</code> for logging</td><td>Keeps every step's graph alive, so memory grows until OOM</td><td><code>loss_total += loss.item()</code></td></tr>
+    <tr><td><code>view</code> after <code>permute</code></td><td>RuntimeError: not contiguous</td><td><code>.contiguous().view(...)</code> or <code>reshape</code></td></tr>
+    <tr><td>Silent broadcasting (64,1) vs (64,)</td><td>Wrong loss, no error</td><td>Assert shapes, <code>squeeze(-1)</code></td></tr>
+    <tr><td><code>.numpy()</code> on a CUDA or grad tensor</td><td>Error</td><td><code>.detach().cpu().numpy()</code></td></tr>
+    <tr><td>Float labels in CrossEntropyLoss / long labels in BCE</td><td>dtype errors</td><td>CE: long class indices; BCEWithLogits: float 0/1</td></tr>
+    <tr><td>Creating tensors on CPU inside forward</td><td>Device mismatch on GPU</td><td><code>torch.zeros(..., device=x.device)</code> or <code>x.new_zeros(...)</code></td></tr>
+  </table></div>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>view vs reshape?</summary><div class="ans"><p><code>view</code> never copies and requires compatible (contiguous) memory; it errors otherwise. <code>reshape</code> returns a view when possible and silently copies when not. Use view when you want a guarantee of no copy.</p></div></details>
+  <details class="qa"><summary>What does contiguous mean?</summary><div class="ans"><p>The elements are laid out in memory in the order implied by the shape (row-major). <code>permute</code>/<code>transpose</code> only change strides, so the tensor becomes non-contiguous; <code>.contiguous()</code> makes a re-ordered copy.</p></div></details>
+  <details class="qa"><summary>Why do we call optimizer.zero_grad()?</summary><div class="ans"><p>PyTorch accumulates gradients into <code>.grad</code> on every backward (handy for gradient accumulation and multi-loss setups). Without zeroing, each step uses the sum of all previous gradients.</p></div></details>
+  <details class="qa"><summary>no_grad vs inference_mode vs detach vs eval?</summary><div class="ans"><p><code>no_grad</code>/<code>inference_mode</code> are context managers that stop graph recording (inference_mode is stricter and faster). <code>detach</code> cuts one tensor out of the graph. <code>model.eval()</code> changes <b>layer behaviour</b> (dropout off, BatchNorm uses running stats) and doesn't affect gradients. At inference you typically use both eval() and inference_mode().</p></div></details>
+  <details class="qa"><summary>What is a leaf tensor and why is .grad None on my intermediate tensor?</summary><div class="ans"><p>Leaves are tensors you created with requires_grad (like parameters). Only leaves keep <code>.grad</code> by default. For an intermediate, call <code>t.retain_grad()</code> before backward, or use a hook.</p></div></details>
+  <details class="qa"><summary>Static vs dynamic computation graph?</summary><div class="ans"><p>PyTorch builds the graph on the fly during each forward pass (define-by-run), so control flow can depend on data and debugging is natural Python. <code>torch.compile</code>/<code>torch.export</code> capture graphs ahead of time for speed and deployment when needed.</p></div></details>
+  <details class="qa"><summary>When would you write a custom autograd Function?</summary><div class="ans"><p>When an op isn't differentiable or you want a different gradient (straight-through estimator for quantisation, gradient reversal for domain adaptation), or for a memory-efficient handwritten backward. Verify it with <code>gradcheck</code>.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const parse=s=>s.split(',').map(v=>v.trim()).filter(v=>v!=='').map(Number);
+  const fmt=a=>'('+a.join(', ')+(a.length===1?',':'')+')';
+  function shapeLab(){
+    let x=parse($('sIn').value),arg=parse($('sArg').value),op=$('sOp').value,out,note='';
+    try{
+      if(x.some(v=>!Number.isInteger(v)||v<1))throw 'Input dims must be positive integers.';
+      const n=x.reduce((a,b)=>a*b,1);const nd=d=>{if(d<0)d+=x.length;if(d<0||d>=x.length)throw `dim ${d} out of range for ${x.length}-D tensor`;return d;};
+      if(op==='view'){const neg=arg.filter(v=>v===-1).length;if(neg>1)throw 'only one -1 allowed';const known=arg.filter(v=>v!==-1).reduce((a,b)=>a*b,1);
+        if(neg){if(n%known)throw `cannot infer -1: ${n} elements not divisible by ${known}`;out=arg.map(v=>v===-1?n/known:v);}else{if(known!==n)throw `shape ${fmt(arg)} is invalid for input of size ${n}`;out=arg;} note=`${n} elements, same data viewed differently. view needs contiguous memory; reshape copies if needed.`;}
+      else if(op==='permute'){if(arg.length!==x.length||[...arg].map(nd).sort().join()!==x.map((_,i)=>i).join())throw 'permute needs each dim exactly once';out=arg.map(d=>x[nd(d)]);note='Result is NON-contiguous. Call .contiguous() before .view().';}
+      else if(op==='transpose'){if(arg.length!==2)throw 'give two dims';out=[...x];const a=nd(arg[0]),b=nd(arg[1]);[out[a],out[b]]=[out[b],out[a]];note='Swaps two axes; result is non-contiguous.';}
+      else if(op==='unsqueeze'){let d=arg[0];if(d<0)d+=x.length+1;if(d<0||d>x.length)throw 'dim out of range';out=[...x];out.splice(d,0,1);note='Adds a size-1 axis, e.g. to make (B,) broadcast as (B,1).';}
+      else if(op==='squeeze'){const d=nd(arg[0]);out=[...x];if(out[d]===1){out.splice(d,1);note='Removed the size-1 axis.';}else note=`dim ${d} has size ${x[d]} ≠ 1 → squeeze does nothing (silently!).`;}
+      else if(op==='flatten'){const d=nd(arg[0]);out=x.slice(0,d).concat([x.slice(d).reduce((a,b)=>a*b,1)]);note='Typical before a Linear layer: flatten(1) keeps the batch dim.';}
+      else if(op==='sum'||op==='mean'||op==='sumk'){const d=nd(arg[0]);out=[...x];if(op==='sumk'){out[d]=1;note='keepdim=True keeps the axis as size 1, so the result broadcasts back against x (e.g. x / x.sum(1, keepdim=True)).';}else{out.splice(d,1);note=`Reduces over dim ${d}.`;}}
+      else if(op==='matmul'){if(arg.length!==2)throw 'W shape: in, out';if(x[x.length-1]!==arg[0])throw `size mismatch: last dim of x is ${x[x.length-1]} but W expects ${arg[0]} ("mat1 and mat2 shapes cannot be multiplied")`;out=x.slice(0,-1).concat([arg[1]]);note='Leading dims are treated as batch dims.';}
+      else if(op==='linear'){if(x[x.length-1]!==arg[0])throw `Linear(in_features=${arg[0]}) but input last dim is ${x[x.length-1]}. Did you forget flatten(1)? (${x.slice(1).reduce((a,b)=>a*b,1)} after flatten)`;out=x.slice(0,-1).concat([arg[1]]);note=`Applies to the last dim only. Params = ${arg[0]}·${arg[1]} + ${arg[1]} = ${(arg[0]*arg[1]+arg[1]).toLocaleString()}`;}
+      else if(op==='conv'){if(x.length!==4)throw 'Conv2d expects (B, C, H, W)';const s=arg[1]||1;const H=Math.floor((x[2]-3+2)/s)+1,W=Math.floor((x[3]-3+2)/s)+1;out=[x[0],arg[0],H,W];note=`out = ⌊(H − 3 + 2·1)/${s}⌋ + 1. Params = (3·3·${x[1]} + 1)·${arg[0]} = ${((9*x[1]+1)*arg[0]).toLocaleString()}`;}
+      $('sOut').innerHTML=`${fmt(x)} → <b style="color:var(--green)">${fmt(out)}</b><br><span style="font-family:var(--sans);color:var(--muted)">${note}</span>`;
+    }catch(e){$('sOut').innerHTML=`<b style="color:var(--coral)">RuntimeError:</b> <span style="font-family:var(--sans)">${e}</span>`;}
+  }
+  ['sIn','sOp','sArg'].forEach(id=>$(id).addEventListener('input',shapeLab));
+  $('sOp').addEventListener('change',()=>{const d={view:'8, -1',permute:'0, 2, 3, 1',transpose:'1, 2',unsqueeze:'0',squeeze:'1',flatten:'1',sum:'1',sumk:'1',mean:'0',matmul:'3072, 10',linear:'3072, 10',conv:'64, 2'};$('sArg').value=d[$('sOp').value];shapeLab();});
+  function bc(){
+    const A=parse($('bA').value),B=parse($('bB').value),n=Math.max(A.length,B.length);
+    const pa=Array(n-A.length).fill(null).concat(A),pb=Array(n-B.length).fill(null).concat(B);let out=[],ok=true;
+    const row=(arr,cls)=>arr.map((v,i)=>`<span class="${v===null?'ghost':cls[i]}">${v===null?'·':v}</span>`).join('');
+    const cls=[];for(let i=0;i<n;i++){const a=pa[i]??1,b=pb[i]??1;if(a===b){out.push(a);cls.push('ok');}else if(a===1||b===1){out.push(Math.max(a,b));cls.push('st');}else{ok=false;out.push('✗');cls.push('bad');}}
+    $('bOut').innerHTML=`A: ${row(pa,cls)}<br>B: ${row(pb,cls)}<br>→ ${ok?`<span class="ok">result ${fmt(out)}</span>`:`<span class="bad">RuntimeError: sizes don't match at a highlighted dim</span>`}<br><span style="font-family:var(--sans);font-size:13px;color:var(--muted)">Aligned from the right. Green = equal, amber = size 1 stretched, · = missing dim treated as 1.${ok&&out.reduce((a,b)=>a*b,1)>Math.max(A.reduce((a,b)=>a*b,1),B.reduce((a,b)=>a*b,1))*4?' ⚠️ The result is much bigger than either input. Is that intended?':''}</span>`;
+  }
+  ['bA','bB'].forEach(id=>$(id).addEventListener('input',bc));
+  function graph(){
+    const x=+$('gx').value,w=+$('gw').value,b=+$('gb').value,y=+$('gy').value;['gx','gw','gb','gy'].forEach(id=>$(id+'v').textContent=(+$(id).value).toFixed(1));
+    const m=w*x,z=m+b,d=z-y,L=d*d,dL=1,dd=2*d,dz=dd,dm=dz,db=dz,dw=dm*x,dx=dm*w;
+    const node=(cx,cy,label,val,grad,leaf)=>`<g><rect x="${cx-52}" y="${cy-30}" width="104" height="60" rx="12" fill="var(--panel)" stroke="${leaf?'#4338ca':'var(--line)'}" stroke-width="${leaf?2.5:1.5}"/><text x="${cx}" y="${cy-10}" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">${label}</text><text x="${cx}" y="${cy+7}" text-anchor="middle" font-size="12.5" fill="#4338ca" font-family="ui-monospace,monospace">${val.toFixed(2)}</text><text x="${cx}" y="${cy+23}" text-anchor="middle" font-size="12" fill="#e2554f" font-family="ui-monospace,monospace">∂L=${grad.toFixed(2)}</text></g>`;
+    const arrow=(x1,y1,x2,y2,t)=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>${t?`<text x="${(x1+x2)/2}" y="${(y1+y2)/2-6}" text-anchor="middle" font-size="11" fill="var(--muted)">${t}</text>`:''}`;
+    $('gsvg').innerHTML=`<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+      ${node(60,45,'w (leaf)',w,dw,1)}${node(60,165,'x (input)',x,dx,0)}${node(225,105,'m = w·x',m,dm,0)}${node(380,45,'b (leaf)',b,db,1)}${node(380,165,'z = m + b',z,dz,0)}${node(540,165,'d = z − y',d,dd,0)}${node(695,105,'L = d²',L,dL,0)}
+      ${arrow(112,55,173,95,'Mul')}${arrow(112,155,173,115,'')}${arrow(277,115,328,155,'Add')}${arrow(380,75,380,135,'')}${arrow(432,165,488,165,'Sub')}${arrow(592,155,643,115,'Pow')}`;
+    $('gout').innerHTML=`Chain rule: ∂L/∂d = 2d = <b>${dd.toFixed(2)}</b> → ∂L/∂z = ${dz.toFixed(2)} → <b>w.grad</b> = ∂L/∂m · x = ${dm.toFixed(2)} × ${x.toFixed(1)} = <b>${dw.toFixed(2)}</b>, <b>b.grad</b> = ${db.toFixed(2)}. &nbsp;SGD with lr 0.1 would move w → ${(w-0.1*dw).toFixed(2)}.`;
+  }
+  ['gx','gw','gb','gy'].forEach(id=>$(id).addEventListener('input',graph));
+  shapeLab();bc();graph();
+})();
+</script>
+</body>
+</html>

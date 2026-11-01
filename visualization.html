@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Visualisation & debugging toolkit · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+<style>.cm{display:grid;grid-template-columns:auto 1fr 1fr;gap:4px;max-width:340px;font-size:13.5px;text-align:center;margin-top:10px}.cm div{padding:9px;border-radius:8px}.cm .h{color:var(--muted);font-size:12px;background:none}.tp{background:var(--green-soft);color:var(--green)}.tn{background:var(--teal-soft);color:var(--teal)}.fp{background:var(--coral-soft);color:var(--coral)}.fn{background:var(--amber-soft);color:var(--amber)}.evalgrid{display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start}@media(max-width:800px){.evalgrid{grid-template-columns:1fr}}</style>
+</head>
+<body data-page="visualization">
+<main>
+  <div class="eyebrow">PyTorch track · Visualise everything</div>
+  <h1>Visualisation &amp; debugging toolkit</h1>
+  <p class="lede">You can't fix what you can't see. Senior data scientists don't stare at a single accuracy number: they <b>plot</b> loss curves, gradients, activations, embeddings, attributions and error slices until the model's behaviour makes sense. This page maps each question to the right plot and tool, with working PyTorch code for each.</p>
+  <div class="callout win" style="margin:6px 0 4px"><div class="tag">🔥 The PyTorch track</div><p><a href="pt-tensors.html">I. Tensors</a> → <a href="pt-training.html">II. Training loop</a> → <a href="pt-performance.html">III. Performance</a> → <b>Visualisation toolkit</b> → <a href="pt-drills.html">Drills</a>. Every lesson page also has a <b>🔍 Visualise it</b> section.</p></div>
+  <div class="toc"><a href="#map">Question → plot</a><a href="#tools">Tools</a><a href="#dash">Read a dashboard</a><a href="#curves">Curves &amp; LR finder</a><a href="#tb">TensorBoard</a><a href="#wandb">W&amp;B</a><a href="#arch">Architecture</a><a href="#internals">Gradients &amp; activations</a><a href="#eval">Evaluation plots</a><a href="#evalcode">Eval code</a><a href="#xai">Attribution (Captum)</a><a href="#emb">Embeddings</a><a href="#cnnviz">CNN internals</a><a href="#attn">Attention maps</a><a href="#landscape">Loss landscape</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="map">Which plot answers which question?</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Question</th><th>Plot / technique</th><th>Tool</th></tr>
+    <tr><td>Is it learning? Overfitting?</td><td>Train vs val loss and metric curves</td><td>TensorBoard / W&amp;B / matplotlib</td></tr>
+    <tr><td>Is my learning rate right?</td><td>LR range test (loss vs LR, log scale); LR schedule plot</td><td>Custom LR finder</td></tr>
+    <tr><td>Are gradients healthy?</td><td>Global and per-layer gradient norms over time; gradient histograms</td><td>Hooks + TensorBoard histograms</td></tr>
+    <tr><td>Dead or saturated units?</td><td>Activation mean/std and % zeros per layer</td><td>Forward hooks</td></tr>
+    <tr><td>Is the architecture what I think?</td><td>Layer table with output shapes and params; computation graph; graph viewer</td><td>torchinfo, torchviz, Netron</td></tr>
+    <tr><td>Is the data right?</td><td>Grid of input samples <i>after</i> transforms with labels; class distribution</td><td>torchvision make_grid, matplotlib</td></tr>
+    <tr><td>How good, and where wrong?</td><td>Confusion matrix, ROC, PR, calibration, per-slice metrics, worst examples</td><td>scikit-learn displays, torchmetrics</td></tr>
+    <tr><td>Why this prediction?</td><td>Integrated Gradients, saliency, Grad-CAM, SHAP, attention maps</td><td>Captum, SHAP, bertviz</td></tr>
+    <tr><td>What did it learn?</td><td>t-SNE / UMAP of embeddings; filters and feature maps</td><td>scikit-learn, TensorBoard projector</td></tr>
+    <tr><td>Why is it slow / out of memory?</td><td>Profiler timeline; memory snapshot</td><td>torch.profiler → Perfetto; pytorch.org/memory_viz</td></tr>
+  </table></div>
+
+  <h2 id="tools">The tool landscape</h2>
+  <div class="grid">
+    <div class="card"><div class="kicker">experiment tracking</div><h4>TensorBoard</h4><p>Free and local. Scalars, histograms, images, graphs, embedding projector, PR curves, hparams. <code>tensorboard --logdir runs</code></p></div>
+    <div class="card"><div class="kicker">experiment tracking</div><h4>Weights &amp; Biases / MLflow</h4><p>Hosted dashboards, run comparison, sweeps, artifacts. MLflow is popular for self-hosted model registries in banks.</p></div>
+    <div class="card"><div class="kicker">architecture</div><h4>torchinfo · torchviz · Netron</h4><p>Layer summary table, autograd graph image, interactive model-file viewer (ONNX and more).</p></div>
+    <div class="card"><div class="kicker">interpretability</div><h4>Captum</h4><p>PyTorch's attribution library: Integrated Gradients, Saliency, DeepLift, GradCAM, occlusion, layer and neuron attribution.</p></div>
+    <div class="card"><div class="kicker">evaluation</div><h4>scikit-learn displays · torchmetrics</h4><p><code>ConfusionMatrixDisplay</code>, <code>RocCurveDisplay</code>, <code>PrecisionRecallDisplay</code>, <code>CalibrationDisplay</code>.</p></div>
+    <div class="card"><div class="kicker">performance</div><h4>Perfetto · HTA · memory_viz</h4><p>Profiler traces and GPU memory snapshots. The TensorBoard profiler plugin is deprecated.</p></div>
+  </div>
+
+  <h2 id="dash">Learn to read a training dashboard</h2>
+  <div class="widget">
+    <div class="widget-title">Training dashboard reader</div>
+    <div class="widget-sub">Six classic runs. Each shows the four panels you should log on every project: loss, global gradient norm (log scale), learning rate, and % of dead ReLU activations. Pick a run and read the symptoms before revealing the diagnosis.</div>
+    <div class="seg" id="dseg"></div>
+    <canvas id="dc" style="margin-top:12px"></canvas>
+    <div style="margin-top:10px"><button class="btn small" id="reveal">Reveal diagnosis</button></div>
+    <div class="readout" id="dout" style="font-family:var(--sans)">Pick a run, read the four panels, then reveal.</div>
+  </div>
+
+  <h2 id="curves">Loss curves and the LR finder</h2>
+  <script type="text/plain" class="snippet" data-title="plot train/val curves and the LR schedule with matplotlib">
+    import torch, torch.nn as nn, matplotlib.pyplot as plt
+
+    torch.manual_seed(0)
+    X = torch.randn(1200, 10); y = (X[:, :3].sum(1) > 0).float()
+    model = nn.Sequential(nn.Linear(10, 256), nn.ReLU(), nn.Linear(256, 1))
+    opt = torch.optim.AdamW(model.parameters(), lr=3e-3)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=60)
+    loss_fn = nn.BCEWithLogitsLoss()
+    hist = {"train": [], "val": [], "lr": []}
+    for ep in range(60):
+        model.train(); opt.zero_grad()
+        loss = loss_fn(model(X[:200]).squeeze(1), y[:200])     # tiny train set -> overfits
+        loss.backward(); opt.step(); sched.step()
+        model.eval()
+        with torch.no_grad():
+            val = loss_fn(model(X[200:]).squeeze(1), y[200:])
+        hist["train"].append(loss.item()); hist["val"].append(val.item())
+        hist["lr"].append(opt.param_groups[0]["lr"])
+
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(10, 3.5))
+    a1.plot(hist["train"], label="train"); a1.plot(hist["val"], label="val")
+    best = min(range(60), key=hist["val"].__getitem__)
+    a1.axvline(best, ls="--", c="gray"); a1.set(title="Loss (dashed = best val epoch)", xlabel="epoch"); a1.legend()
+    a2.plot(hist["lr"]); a2.set(title="Learning rate", xlabel="epoch")
+    plt.tight_layout(); plt.savefig("curves.png", dpi=120); plt.show()
+  </script>
+  <script type="text/plain" class="snippet" data-title="LR range test (LR finder) from scratch">
+    import copy, math, torch, torch.nn as nn, matplotlib.pyplot as plt
+
+    def lr_finder(model, loader, loss_fn, lr_min=1e-6, lr_max=1, steps=100, beta=0.98):
+        model = copy.deepcopy(model); model.train()        # don't touch the real weights
+        opt = torch.optim.SGD(model.parameters(), lr=lr_min, momentum=0.9)
+        mult = (lr_max / lr_min) ** (1 / steps)
+        lrs, losses, avg, best = [], [], 0.0, float("inf")
+        it = iter(loader)
+        for i in range(steps):
+            try: xb, yb = next(it)
+            except StopIteration: it = iter(loader); xb, yb = next(it)
+            opt.zero_grad(); loss = loss_fn(model(xb).squeeze(1), yb); loss.backward(); opt.step()
+            avg = beta * avg + (1 - beta) * loss.item(); smooth = avg / (1 - beta ** (i + 1))
+            lrs.append(opt.param_groups[0]["lr"]); losses.append(smooth)
+            if smooth > 4 * best or math.isnan(smooth): break   # diverged: stop
+            best = min(best, smooth)
+            for g in opt.param_groups: g["lr"] *= mult
+        return lrs, losses
+
+    from torch.utils.data import TensorDataset, DataLoader
+    X = torch.randn(4000, 10); y = (X[:, 0] > 0).float()
+    dl = DataLoader(TensorDataset(X, y), batch_size=64, shuffle=True)
+    net = nn.Sequential(nn.Linear(10, 64), nn.ReLU(), nn.Linear(64, 1))
+    lrs, losses = lr_finder(net, dl, nn.BCEWithLogitsLoss())
+    i_min = min(range(len(losses)), key=losses.__getitem__)
+    plt.semilogx(lrs, losses); plt.axvline(lrs[i_min] / 10, ls="--", c="r")
+    plt.title(f"LR finder: pick ≈ {lrs[i_min] / 10:.1e} (1/10 of the loss minimum)")
+    plt.xlabel("learning rate (log)"); plt.ylabel("smoothed loss"); plt.savefig("lr_finder.png", dpi=120); plt.show()
+  </script>
+
+  <h2 id="tb">TensorBoard: log everything in one place</h2>
+  <script type="text/plain" class="snippet" data-title="SummaryWriter: scalars, histograms, images, graph, embeddings, PR curve, hparams">
+    import torch, torch.nn as nn, torchvision
+    from torch.utils.tensorboard import SummaryWriter
+
+    writer = SummaryWriter("runs/fraud_v1")                  # one folder per run
+    model = nn.Sequential(nn.Linear(20, 64), nn.ReLU(), nn.Linear(64, 1))
+    x = torch.randn(256, 20); y = (x[:, 0] > 0).float()
+    opt = torch.optim.Adam(model.parameters(), 1e-2)
+
+    writer.add_graph(model, x[:2])                           # architecture graph tab
+    for step in range(100):
+        opt.zero_grad(); logits = model(x).squeeze(1)
+        loss = nn.functional.binary_cross_entropy_with_logits(logits, y); loss.backward()
+        gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1e9)   # just measure
+        opt.step()
+        writer.add_scalar("loss/train", loss.item(), step)
+        writer.add_scalar("grad_norm", gnorm.item(), step)
+        writer.add_scalars("compare", {"loss": loss.item(), "lr": 1e-2}, step)
+        if step % 20 == 0:
+            for name, p in model.named_parameters():
+                writer.add_histogram(f"weights/{name}", p, step)
+                writer.add_histogram(f"grads/{name}", p.grad, step)
+
+    imgs = torch.rand(16, 3, 32, 32)                          # e.g. a batch AFTER augmentation
+    writer.add_image("inputs", torchvision.utils.make_grid(imgs, nrow=8), 0)
+    feats = model[0](x).detach()                              # hidden features -> projector tab
+    writer.add_embedding(feats, metadata=y.int().tolist(), tag="hidden")
+    writer.add_pr_curve("pr/val", y.int(), torch.sigmoid(logits.detach()), 0)
+    writer.add_hparams({"lr": 1e-2, "hidden": 64}, {"hparam/final_loss": loss.item()})
+    writer.close()
+    # then run:  tensorboard --logdir runs   (in Colab: %load_ext tensorboard ; %tensorboard --logdir runs)
+  </script>
+
+  <h2 id="wandb">Weights &amp; Biases (hosted tracking)</h2>
+  <script type="text/plain" class="snippet" data-title="W&B in 6 lines (works offline too)">
+    import wandb
+    run = wandb.init(project="fraud-dl", config={"lr": 1e-3, "hidden": 128},
+                     mode="offline")                         # "online" after `wandb login`
+    wandb.watch(model, log="all", log_freq=50)               # auto-log gradients + weights histograms
+    for step in range(100):
+        wandb.log({"loss/train": 0.5, "loss/val": 0.6})      # your real values here
+    wandb.log({"roc": wandb.plot.roc_curve(y_true, probs_2col)})   # rich plots too
+    run.finish()
+  </script>
+
+  <h2 id="arch">See the architecture</h2>
+  <script type="text/plain" class="snippet" data-title="torchinfo summary + torchviz graph (+ Netron)">
+    import torch, torchvision
+    from torchinfo import summary
+
+    model = torchvision.models.resnet18(weights=None)
+    print(summary(model, input_size=(1, 3, 224, 224), depth=2,
+                  col_names=("output_size", "num_params", "mult_adds")))   # shapes + params per layer
+
+    from torchviz import make_dot                             # needs graphviz installed
+    small = torch.nn.Sequential(torch.nn.Linear(4, 8), torch.nn.ReLU(), torch.nn.Linear(8, 1))
+    out = small(torch.randn(2, 4)).sum()
+    make_dot(out, params=dict(small.named_parameters())).render("graph", format="png")
+
+    # Netron: export to ONNX, then open the file at netron.app (or `pip install netron; netron model.onnx`)
+    # torch.onnx.export(model, torch.randn(1, 3, 224, 224), "resnet18.onnx", dynamo=True)
+  </script>
+
+  <h2 id="internals">Gradients and activations: look inside</h2>
+  <script type="text/plain" class="snippet" data-title="forward hooks for activation stats + per-layer gradient norms">
+    import torch, torch.nn as nn, matplotlib.pyplot as plt
+
+    torch.manual_seed(0)
+    layers = []
+    for i in range(8):
+        layers += [nn.Linear(64, 64), nn.ReLU()]
+    net = nn.Sequential(*layers, nn.Linear(64, 1))
+    for m in net:                                    # bad init on purpose: shrinking signal
+        if isinstance(m, nn.Linear): nn.init.normal_(m.weight, std=0.05)
+
+    stats = {}
+    def hook(name):
+        def fn(mod, inp, out):
+            stats[name] = {"mean": out.mean().item(), "std": out.std().item(),
+                           "dead": (out <= 0).float().mean().item()}
+        return fn
+    handles = [m.register_forward_hook(hook(f"relu{i}"))
+               for i, m in enumerate(x for x in net if isinstance(x, nn.ReLU))]
+
+    x = torch.randn(512, 64)
+    net(x).pow(2).mean().backward()
+    for h in handles: h.remove()                     # always remove hooks when done
+
+    names = list(stats)
+    gnorms = [m.weight.grad.norm().item() for m in net if isinstance(m, nn.Linear)]
+    fig, ax = plt.subplots(1, 3, figsize=(13, 3.2))
+    ax[0].bar(names, [stats[n]["std"] for n in names]); ax[0].set_title("activation std per layer (shrinking = vanishing)")
+    ax[1].bar(names, [stats[n]["dead"] for n in names]); ax[1].set_title("fraction of zero (dead) ReLU outputs")
+    ax[2].bar(range(len(gnorms)), gnorms); ax[2].set_yscale("log"); ax[2].set_title("weight-grad norm per Linear (log)")
+    for a in ax: a.tick_params(axis="x", rotation=45)
+    plt.tight_layout(); plt.savefig("internals.png", dpi=120); plt.show()
+    # fix: nn.init.kaiming_normal_ -> activation std stays ~constant across layers
+  </script>
+  <div class="callout interview"><div class="tag">🎯 Healthy signs to look for</div><p>Activation std roughly constant across layers (not shrinking to 0 or exploding). Dead-ReLU fraction not climbing towards 100%. Gradient norms similar in magnitude across layers. Update-to-weight ratio (lr·‖grad‖ / ‖w‖) around <b>1e-3</b>: much smaller means the LR is too low, much larger means it's too high.</p></div>
+
+  <h2 id="eval">Evaluation plots, live</h2>
+  <div class="widget">
+    <div class="widget-title">Threshold, ROC, PR and calibration in one view</div>
+    <div class="widget-sub">Simulated fraud scores. Watch how prevalence wrecks precision while ROC barely changes, and how an over-confident model bends the reliability curve.</div>
+    <div class="controls">
+      <div class="control"><label>class separation (model quality) <b id="sepv"></b></label><input type="range" id="sep" min="0.2" max="4" step="0.1" value="2"></div>
+      <div class="control"><label>prevalence (positive rate) <b id="prevv"></b></label><input type="range" id="prev" min="-3" max="-0.3" step="0.05" value="-1.3"></div>
+      <div class="control"><label>decision threshold <b id="thv"></b></label><input type="range" id="th" min="0.01" max="0.99" step="0.01" value="0.5"></div>
+      <div class="control"><label>over-confidence (1 = calibrated) <b id="ocv"></b></label><input type="range" id="oc" min="0.4" max="3" step="0.05" value="1.6"></div>
+    </div>
+    <div class="evalgrid"><canvas id="ec"></canvas><div><div class="cm" id="cm"></div><div class="readout" id="eout"></div></div></div>
+  </div>
+
+  <h2 id="evalcode">Evaluation plots in code</h2>
+  <script type="text/plain" class="snippet" data-title="confusion matrix, ROC, PR, calibration: the four plots for any classifier">
+    import numpy as np, matplotlib.pyplot as plt
+    from sklearn.metrics import (ConfusionMatrixDisplay, RocCurveDisplay,
+                                 PrecisionRecallDisplay, roc_auc_score, average_precision_score)
+    from sklearn.calibration import CalibrationDisplay
+
+    rng = np.random.default_rng(0)
+    y_true = rng.random(5000) < 0.05                           # 5% positives
+    logits = rng.normal(0, 1, 5000) + 2.2 * y_true
+    probs = 1 / (1 + np.exp(-(1.8 * logits - 4)))             # over-confident model on purpose
+
+    fig, ax = plt.subplots(1, 4, figsize=(18, 4))
+    ConfusionMatrixDisplay.from_predictions(y_true, probs > 0.5, ax=ax[0], colorbar=False)
+    RocCurveDisplay.from_predictions(y_true, probs, ax=ax[1])
+    PrecisionRecallDisplay.from_predictions(y_true, probs, ax=ax[2])
+    ax[2].axhline(y_true.mean(), ls="--", c="gray", label="random baseline"); ax[2].legend()
+    CalibrationDisplay.from_predictions(y_true, probs, n_bins=10, strategy="quantile", ax=ax[3])
+    ax[0].set_title("Confusion @0.5"); ax[1].set_title(f"ROC AUC {roc_auc_score(y_true, probs):.3f}")
+    ax[2].set_title(f"PR AP {average_precision_score(y_true, probs):.3f}"); ax[3].set_title("Reliability")
+    plt.tight_layout(); plt.savefig("eval.png", dpi=110); plt.show()
+  </script>
+  <script type="text/plain" class="snippet" data-title="error analysis: metrics per slice + worst examples">
+    import pandas as pd
+    df = pd.DataFrame({"y": y_true, "p": probs,
+                       "channel": rng.choice(["upi", "card", "netbanking"], 5000),
+                       "new_customer": rng.random(5000) < 0.2})
+    def slice_metrics(g):
+        return pd.Series({"n": len(g), "pos_rate": g.y.mean(),
+                          "recall@0.5": (g.p[g.y] > 0.5).mean() if g.y.any() else np.nan,
+                          "AP": average_precision_score(g.y, g.p) if g.y.any() else np.nan})
+    print(df.groupby(["channel", "new_customer"]).apply(slice_metrics).round(3))
+    worst_fn = df[df.y].nsmallest(10, "p")        # frauds the model was most sure were fine -> inspect!
+    worst_fp = df[~df.y].nlargest(10, "p")        # legit customers we would block
+  </script>
+
+  <h2 id="xai">Attribution with Captum: why did it predict that?</h2>
+  <script type="text/plain" class="snippet" data-title="Integrated Gradients for a tabular model + Grad-CAM / saliency for an image model">
+    import torch, torch.nn as nn, torchvision, matplotlib.pyplot as plt
+    from captum.attr import IntegratedGradients, Saliency, LayerGradCam, LayerAttribution
+
+    # --- tabular: which features pushed this transaction towards fraud? ---
+    torch.manual_seed(0)
+    feat_names = ["amount", "night", "new_device", "foreign", "velocity_1h", "age_days"]
+    tab = nn.Sequential(nn.Linear(6, 32), nn.ReLU(), nn.Linear(32, 1))
+    x = torch.randn(1, 6)
+    ig = IntegratedGradients(lambda inp: tab(inp).squeeze(-1))
+    attr, delta = ig.attribute(x, baselines=torch.zeros_like(x), n_steps=64,
+                               return_convergence_delta=True)          # delta ~ 0 means faithful
+    plt.figure(figsize=(6, 2.8)); plt.barh(feat_names, attr[0].detach().numpy())
+    plt.title(f"Integrated Gradients (delta={delta.item():.1e})"); plt.tight_layout(); plt.savefig("ig.png")
+
+    # --- image: where is the CNN looking? (use pretrained weights in practice) ---
+    cnn = torchvision.models.resnet18(weights=None).eval()
+    img = torch.rand(1, 3, 224, 224, requires_grad=True)
+    target = cnn(img).argmax(1).item()
+    sal = Saliency(cnn).attribute(img, target=target).abs().max(1)[0]       # (1, 224, 224)
+    gc = LayerGradCam(cnn, cnn.layer4).attribute(img, target=target)       # (1, 1, 7, 7)
+    gc = LayerAttribution.interpolate(gc, (224, 224)).relu()
+    fig, ax = plt.subplots(1, 3, figsize=(10, 3.4))
+    ax[0].imshow(img[0].detach().permute(1, 2, 0)); ax[0].set_title("input")
+    ax[1].imshow(sal[0].detach(), cmap="hot"); ax[1].set_title("saliency")
+    ax[2].imshow(img[0].detach().permute(1, 2, 0)); ax[2].imshow(gc[0, 0].detach(), cmap="jet", alpha=0.45)
+    ax[2].set_title("Grad-CAM overlay")
+    for a in ax: a.axis("off")
+    plt.tight_layout(); plt.savefig("cam.png", dpi=110); plt.show()
+  </script>
+  <div class="table-wrap"><table>
+    <tr><th>Method</th><th>Idea</th><th>Use for</th></tr>
+    <tr><td>Saliency</td><td>|∂output/∂input|</td><td>Quick, noisy first look</td></tr>
+    <tr><td><b>Integrated Gradients</b></td><td>Average gradients along a path from a baseline to the input; attributions sum to output − baseline output</td><td>Tabular reason codes, text tokens; choose the baseline thoughtfully</td></tr>
+    <tr><td><b>Grad-CAM</b></td><td>Weight the last conv feature maps by their pooled gradients</td><td>"Is the CNN looking at the dent or the watermark?"</td></tr>
+    <tr><td>Occlusion</td><td>Slide a patch over the input and measure the score drop</td><td>Model-agnostic sanity check (slow)</td></tr>
+    <tr><td>SHAP (GradientExplainer / DeepExplainer)</td><td>Shapley-value attributions</td><td>Regulator-facing explanations</td></tr>
+  </table></div>
+
+  <h2 id="emb">Visualise embeddings</h2>
+  <script type="text/plain" class="snippet" data-title="t-SNE of learned embeddings, coloured by class">
+    import torch, torch.nn as nn, numpy as np, matplotlib.pyplot as plt
+    from sklearn.manifold import TSNE
+
+    torch.manual_seed(0)
+    n_cls, d = 4, 32
+    centers = torch.randn(n_cls, d) * 3                     # pretend these came from a trained encoder
+    labels = torch.randint(0, n_cls, (800,))
+    emb = centers[labels] + torch.randn(800, d)
+
+    xy = TSNE(n_components=2, perplexity=30, init="pca", random_state=0).fit_transform(emb.numpy())
+    plt.figure(figsize=(5, 4.5))
+    sc = plt.scatter(xy[:, 0], xy[:, 1], c=labels, cmap="tab10", s=8)
+    plt.legend(*sc.legend_elements(), title="class", fontsize=8)
+    plt.title("t-SNE of embeddings (clusters = learned structure)"); plt.savefig("tsne.png", dpi=120); plt.show()
+    # caution: t-SNE distances BETWEEN clusters and cluster sizes are not meaningful; try several perplexities.
+    # UMAP (pip install umap-learn) is faster and keeps more global structure.
+  </script>
+
+  <h2 id="cnnviz">CNN internals: filters and feature maps</h2>
+  <script type="text/plain" class="snippet" data-title="first-layer filters and intermediate feature maps">
+    import torch, torchvision, matplotlib.pyplot as plt
+
+    cnn = torchvision.models.resnet18(weights=None).eval()     # use weights="DEFAULT" to see real edge detectors
+    w = cnn.conv1.weight.detach()                              # (64, 3, 7, 7)
+    w = (w - w.min()) / (w.max() - w.min())
+    grid = torchvision.utils.make_grid(w, nrow=16, padding=1)
+    plt.figure(figsize=(10, 3)); plt.imshow(grid.permute(1, 2, 0)); plt.axis("off"); plt.title("conv1 filters")
+    plt.savefig("filters.png", dpi=120)
+
+    feats = {}
+    cnn.layer1.register_forward_hook(lambda m, i, o: feats.__setitem__("layer1", o))
+    cnn(torch.rand(1, 3, 224, 224))
+    fmap = feats["layer1"][0, :16]                             # first 16 channels, (16, 56, 56)
+    fig, ax = plt.subplots(2, 8, figsize=(12, 3.2))
+    for a, f in zip(ax.flat, fmap):
+        a.imshow(f.detach(), cmap="viridis"); a.axis("off")
+    plt.suptitle("layer1 feature maps"); plt.savefig("fmaps.png", dpi=120); plt.show()
+  </script>
+
+  <h2 id="attn">Attention maps</h2>
+  <script type="text/plain" class="snippet" data-title="plot attention weights from nn.MultiheadAttention">
+    import torch, torch.nn as nn, matplotlib.pyplot as plt
+
+    tokens = ["[CLS]", "card", "used", "abroad", "at", "3am"]
+    torch.manual_seed(0)
+    x = torch.randn(1, len(tokens), 32)
+    mha = nn.MultiheadAttention(32, num_heads=4, batch_first=True)
+    _, w = mha(x, x, x, need_weights=True, average_attn_weights=False)   # (1, heads, T, T)
+    fig, ax = plt.subplots(1, 4, figsize=(14, 3.4))
+    for h in range(4):
+        ax[h].imshow(w[0, h].detach(), cmap="Blues", vmin=0, vmax=w.max().item())
+        ax[h].set_xticks(range(len(tokens)), tokens, rotation=60); ax[h].set_yticks(range(len(tokens)), tokens)
+        ax[h].set_title(f"head {h}")
+    plt.tight_layout(); plt.savefig("attention.png", dpi=110); plt.show()
+    # for Hugging Face models: model(**inputs, output_attentions=True).attentions, or the bertviz library
+  </script>
+
+  <h2 id="landscape">Loss landscape (1-D interpolation)</h2>
+  <script type="text/plain" class="snippet" data-title="how flat is the minimum you found?">
+    import copy, torch, torch.nn as nn, matplotlib.pyplot as plt
+
+    torch.manual_seed(0)
+    X = torch.randn(500, 10); y = (X[:, 0] - X[:, 1] > 0).float()
+    model = nn.Sequential(nn.Linear(10, 32), nn.ReLU(), nn.Linear(32, 1))
+    init = copy.deepcopy(model.state_dict())
+    opt = torch.optim.Adam(model.parameters(), 1e-2)
+    for _ in range(300):
+        opt.zero_grad(); nn.functional.binary_cross_entropy_with_logits(model(X).squeeze(1), y).backward(); opt.step()
+    final = copy.deepcopy(model.state_dict())
+
+    alphas = torch.linspace(-0.5, 1.5, 41); losses = []
+    probe = copy.deepcopy(model)
+    for a in alphas:                                    # theta = (1-a)*init + a*final
+        probe.load_state_dict({k: (1 - a) * init[k] + a * final[k] for k in init})
+        with torch.no_grad():
+            losses.append(nn.functional.binary_cross_entropy_with_logits(probe(X).squeeze(1), y).item())
+    plt.plot(alphas, losses); plt.axvline(0, c="gray", ls=":"); plt.axvline(1, c="r", ls="--")
+    plt.xlabel("α (0 = init, 1 = trained)"); plt.ylabel("loss"); plt.title("1-D loss interpolation")
+    plt.savefig("landscape.png", dpi=120); plt.show()
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>What do you log during training, at minimum?</summary><div class="ans"><p>Train and val loss plus the main metric per epoch, learning rate, global gradient norm, and periodically weight and gradient histograms. Also a sample grid of inputs after augmentation, and the confusion matrix / PR curve on validation. Log hyperparameters and the git commit so runs are comparable.</p></div></details>
+  <details class="qa"><summary>Why prefer the PR curve over ROC for fraud?</summary><div class="ans"><p>With 0.1–1% positives, the false-positive rate stays tiny even when false positives outnumber true frauds, so ROC looks great. Precision directly shows what fraction of alerts are real, which is what analysts and customers feel. Always compare AP with the prevalence baseline.</p></div></details>
+  <details class="qa"><summary>How do you check whether a CNN uses the right evidence?</summary><div class="ans"><p>Grad-CAM or occlusion maps on a sample of correct and incorrect predictions, sliced by class. If heatmaps sit on backgrounds, watermarks or text overlays, you have shortcut learning. Fix the data (crop, randomise backgrounds, add counter-examples) and re-check.</p></div></details>
+  <details class="qa"><summary>How do you know your model's probabilities are trustworthy?</summary><div class="ans"><p>Reliability diagram (predicted probability bins vs observed frequency), Brier score and expected calibration error on held-out data. If the curve sits below the diagonal (over-confident), apply temperature scaling or isotonic calibration on a validation set.</p></div></details>
+  <details class="qa"><summary>t-SNE showed perfectly separated clusters. Does that mean the classifier is great?</summary><div class="ans"><p>Not necessarily. t-SNE exaggerates cluster separation and its distances between clusters aren't meaningful; results depend on perplexity and seed. Use it for qualitative inspection only, and judge performance with held-out metrics.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  // ---------- dashboard reader ----------
+  const E=60,ep=[...Array(E).keys()];
+  const S={
+    'Healthy':{tr:e=>0.9*Math.exp(-e/14)+0.18,va:e=>0.9*Math.exp(-e/14)+0.24,g:e=>1.2*Math.exp(-e/40)+0.3,lr:e=>e<5?(e+1)/5:0.5*(1+Math.cos(Math.PI*(e-5)/(E-5))),dead:e=>0.12+0.05*e/E,
+      dx:'<b>Healthy run.</b> Both losses fall and plateau with a small, stable gap; gradient norm declines smoothly; warm-up then cosine LR; dead ReLUs stay low. Next steps: error analysis, calibration, ensembling.'},
+    'Overfitting':{tr:e=>0.9*Math.exp(-e/9)+0.03,va:e=>0.75*Math.exp(-e/7)+0.3+0.006*Math.max(0,e-15),g:e=>1.1*Math.exp(-e/30)+0.1,lr:e=>1,dead:e=>0.15,
+      dx:'<b>Overfitting.</b> Train loss keeps dropping while validation bottoms out around epoch 15 and rises. Fixes: early stopping at the best epoch, more data or augmentation, dropout and weight decay, smaller model.'},
+    'LR too high':{tr:e=>0.7+0.25*Math.abs(Math.sin(e*1.3))+0.004*e,va:e=>0.78+0.3*Math.abs(Math.sin(e*1.1+1)),g:e=>8+6*Math.abs(Math.sin(e*0.9)),lr:e=>1,dead:e=>0.2+0.6*Math.min(1,e/25),
+      dx:'<b>Learning rate too high.</b> Loss is noisy and never settles; gradient norms are large and erratic; dead ReLUs climb because big updates push units permanently negative. Fixes: lower the LR 3–10×, add warm-up, clip gradients.'},
+    'Dead ReLUs':{tr:e=>0.69-0.0008*e,va:e=>0.70-0.0006*e,g:e=>0.003+0.001*Math.sin(e),lr:e=>1,dead:e=>Math.min(0.97,0.55+0.02*e),
+      dx:'<b>Dying ReLUs / no gradient flow.</b> Loss stuck near ln 2 ≈ 0.69 (random guessing for a binary task), gradient norm almost zero, and over 90% of ReLU outputs are zero. Fixes: He init, lower LR, LeakyReLU/GELU, normalisation layers, check the input scaling.'},
+    'Exploding grads':{tr:e=>e<22?0.9*Math.exp(-e/12)+0.25:(e<24?2.5:NaN),va:e=>e<22?0.9*Math.exp(-e/12)+0.3:(e<24?2.8:NaN),g:e=>e<18?1:Math.pow(10,(e-18)*0.6),lr:e=>1,dead:e=>0.15,
+      dx:'<b>Exploding gradients → NaN.</b> Training looks fine, then the gradient norm shoots up exponentially and the loss becomes NaN (the line stops). Common in RNNs and deep nets without normalisation, or in fp16 without a GradScaler. Fixes: clip_grad_norm_, lower LR, check for log(0) or division by zero, use bf16.'},
+    'Data bug':{tr:e=>0.69-0.25*(1-Math.exp(-e/20)),va:e=>0.693+0.002*Math.sin(e),g:e=>0.8,lr:e=>1,dead:e=>0.15,
+      dx:'<b>Data / label bug.</b> The model can memorise the training set slowly, but validation stays at chance (0.693) from the very first epoch. Likely labels shuffled out of sync with inputs, leakage-free features with no signal, or the val set preprocessed differently. Check a batch visually, overfit one batch, and assert the label alignment.'},
+  };
+  let cur='Healthy';
+  Object.keys(S).forEach(k=>{const b=document.createElement('button');b.textContent=k;b.onclick=()=>{cur=k;$('dout').innerHTML='Read the panels, then reveal.';draw();};$('dseg').appendChild(b);});
+  $('reveal').onclick=()=>{$('dout').innerHTML=S[cur].dx;};
+  function draw(){
+    [...$('dseg').children].forEach(b=>b.classList.toggle('on',b.textContent===cur));
+    const {ctx,w,h,col}=DLP_canvas($('dc'),300);ctx.clearRect(0,0,w,h);const s=S[cur];
+    const P=[[0,0,'loss (train / val)'],[1,0,'grad norm (log)'],[0,1,'learning rate (relative)'],[1,1,'% dead ReLU']];const pw=(w-30)/2,ph=(h-30)/2;
+    P.forEach(([cx,cy,t],k)=>{const x0=10+cx*(pw+10),y0=10+cy*(ph+10);ctx.fillStyle=col('--panel');ctx.fillRect(x0,y0,pw,ph);ctx.strokeStyle=col('--line');ctx.strokeRect(x0,y0,pw,ph);ctx.fillStyle=col('--muted');ctx.font='11px ui-monospace';ctx.fillText(t,x0+8,y0+14);
+      const line=(f,c,lo,hi,log)=>{ctx.strokeStyle=c;ctx.lineWidth=2;ctx.beginPath();let started=false;ep.forEach(e=>{let v=f(e);if(!isFinite(v)){return;}if(log)v=Math.log10(v);const X=x0+8+e/(E-1)*(pw-16),Y=y0+ph-8-(v-lo)/(hi-lo)*(ph-28);started?ctx.lineTo(X,Math.max(y0+18,Math.min(y0+ph-8,Y))):(ctx.moveTo(X,Y),started=true);});ctx.stroke();};
+      if(k===0){line(s.tr,col('--accent'),0,1.2);line(s.va,'#e2554f',0,1.2);ctx.fillStyle=col('--accent');ctx.fillText('train',x0+pw-80,y0+14);ctx.fillStyle='#e2554f';ctx.fillText('val',x0+pw-36,y0+14);}
+      if(k===1)line(s.g,'#b45309',-3,3,true);if(k===2)line(s.lr,'#0f766e',0,1.05);if(k===3)line(s.dead,'#7c3aed',0,1);});
+  }
+  // ---------- eval plots ----------
+  const phi=z=>Math.exp(-z*z/2),Phi=z=>{const t=1/(1+.2316419*Math.abs(z)),d=.3989423*Math.exp(-z*z/2),p=d*t*(.3193815+t*(-.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return z>0?1-p:p;};
+  function evalDraw(){
+    const mu=+$('sep').value,pi=Math.pow(10,+$('prev').value),th=+$('th').value,k=+$('oc').value;
+    $('sepv').textContent=mu.toFixed(1);$('prevv').textContent=(pi*100).toFixed(1)+'%';$('thv').textContent=th.toFixed(2);$('ocv').textContent=k.toFixed(2);
+    const ptrue=s=>{const a=pi*phi(s-mu),b=(1-pi)*phi(s);return a/(a+b);};const logit=p=>Math.log(p/(1-p));
+    const pmodel=s=>1/(1+Math.exp(-k*logit(Math.min(1-1e-9,Math.max(1e-9,ptrue(s))))));
+    // score threshold s* where pmodel = th (pmodel monotone in s)
+    let lo=-8,hi=12;for(let i=0;i<60;i++){const m=(lo+hi)/2;pmodel(m)<th?lo=m:hi=m;}const st=(lo+hi)/2;
+    const tpr=1-Phi(st-mu),fpr=1-Phi(st);const N=10000,P=N*pi,Nn=N-P;const TP=tpr*P,FN=P-TP,FP=fpr*Nn,TN=Nn-FP;const prec=TP/(TP+FP||1);
+    const roc=[],pr=[];let auc=0,ap=0,prevF=1,prevR=1;for(let s=12;s>=-8;s-=0.05){const t=1-Phi(s-mu),f=1-Phi(s);roc.push([f,t]);const p=(t*pi)/(t*pi+f*(1-pi)||1);pr.push([t,p]);}
+    for(let i=1;i<roc.length;i++){auc+=(roc[i][0]-roc[i-1][0])*(roc[i][1]+roc[i-1][1])/2;ap+=(pr[i][0]-pr[i-1][0])*pr[i][1];}
+    const bins=[];for(let b=0;b<10;b++){bins.push({sp:0,st:0,n:0});}
+    for(let s=-6;s<10;s+=0.02){const wgt=pi*phi(s-mu)+(1-pi)*phi(s);const pm=pmodel(s);const b=Math.min(9,Math.floor(pm*10));bins[b].sp+=pm*wgt;bins[b].st+=ptrue(s)*wgt;bins[b].n+=wgt;}
+    const {ctx,w,h,col}=DLP_canvas($('ec'),260);ctx.clearRect(0,0,w,h);const pw=(w-40)/3,ph=h-50;
+    const panel=(i,title,pts,mark,diag,base)=>{const x0=10+i*(pw+10),y0=24;ctx.fillStyle=col('--muted');ctx.font='11.5px ui-monospace';ctx.fillText(title,x0,14);ctx.strokeStyle=col('--line');ctx.strokeRect(x0,y0,pw,ph);
+      const X=v=>x0+v*pw,Y=v=>y0+ph-v*ph;if(diag){ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(X(0),Y(0));ctx.lineTo(X(1),Y(1));ctx.stroke();ctx.setLineDash([]);}
+      if(base!=null){ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(X(0),Y(base));ctx.lineTo(X(1),Y(base));ctx.stroke();ctx.setLineDash([]);}
+      ctx.strokeStyle=col('--accent');ctx.lineWidth=2.2;ctx.beginPath();pts.forEach((p,j)=>j?ctx.lineTo(X(p[0]),Y(p[1])):ctx.moveTo(X(p[0]),Y(p[1])));ctx.stroke();
+      if(mark){ctx.fillStyle='#e2554f';ctx.beginPath();ctx.arc(X(mark[0]),Y(mark[1]),5.5,0,7);ctx.fill();}};
+    panel(0,`ROC  AUC ${auc.toFixed(3)}`,roc,[fpr,tpr],true);
+    panel(1,`PR  AP ${ap.toFixed(3)}`,pr.filter(p=>p[0]>0.001),[tpr,prec],false,pi);
+    const rel=bins.filter(b=>b.n>1e-4).map(b=>[b.sp/b.n,b.st/b.n]);panel(2,'Reliability',rel,null,true);
+    ctx.fillStyle=col('--muted');ctx.fillText('FPR →',10+pw-40,h-10);ctx.fillText('recall →',20+2*pw-50,h-10);ctx.fillText('predicted p →',30+3*pw-90,h-10);
+    const f=v=>Math.round(v).toLocaleString();
+    $('cm').innerHTML=`<div class="h"></div><div class="h">pred fraud</div><div class="h">pred legit</div><div class="h">actual fraud</div><div class="tp">TP ${f(TP)}</div><div class="fn">FN ${f(FN)}</div><div class="h">actual legit</div><div class="fp">FP ${f(FP)}</div><div class="tn">TN ${f(TN)}</div>`;
+    $('eout').innerHTML=`per 10,000 txns · precision <b>${(prec*100).toFixed(1)}%</b> · recall <b>${(tpr*100).toFixed(1)}%</b> · FPR <b>${(fpr*100).toFixed(2)}%</b><br><span style="font-family:var(--sans);color:var(--muted)">${pi<0.02?'Low prevalence: ROC still looks fine but precision collapses. That is why PR/AP is the fraud metric. ':''}${k>1.2?'Over-confident: the reliability curve sits below the diagonal at high p. Use temperature scaling.':k<0.8?'Under-confident: probabilities are squeezed towards the middle.':''}</span>`;
+  }
+  ['sep','prev','th','oc'].forEach(id=>$(id).addEventListener('input',evalDraw));
+  draw();evalDraw();window.addEventListener('resize',()=>{draw();evalDraw();});window.addEventListener('dlp-theme',()=>{draw();evalDraw();});
+})();
+</script>
+</body>
+</html>

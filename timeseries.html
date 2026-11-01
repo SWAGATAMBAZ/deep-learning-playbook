@@ -11,7 +11,7 @@
   <h1>Time-series forecasting with deep learning</h1>
   <p class="lede">Forecasting ATM cash, product demand across 50,000 SKUs, call-centre load or a customer's next-month spend. Deep learning shines when you have <b>many related series</b> and rich covariates, and you train one <i>global</i> model across all of them.</p>
   <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Parameters &amp; tuning per model</div><p>Every model on this page has a card in the <a href="models.html#timeseries">Model encyclopedia</a> with its key parameters, starting values, how to improve it and when to avoid it.</p></div>
-  <div class="toc"><a href="#when">When DL helps</a><a href="#frame">Framing</a><a href="#models">Models</a><a href="#cv">Validation</a><a href="#metrics">Metrics</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#when">When DL helps</a><a href="#frame">Framing</a><a href="#models">Models</a><a href="#cv">Validation</a><a href="#metrics">Metrics</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="when">Classical vs deep learning</h2>
   <div class="table-wrap"><table>
@@ -106,6 +106,25 @@
     pipe = ChronosPipeline.from_pretrained("amazon/chronos-t5-small")
     samples = pipe.predict(torch.tensor(history), prediction_length=14)   # (1, n_samples, 14)
     p10, p50, p90 = np.quantile(samples[0].numpy(), [0.1, 0.5, 0.9], axis=0)
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Forecast fan chart and residual check</h2>
+  <p>Plot quantile forecasts as a shaded band (P10–P90) around the median, and check that residuals look like noise. A visible pattern in the residuals means signal the model missed. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: forecast fan chart and residual check">
+import numpy as np, matplotlib.pyplot as plt
+rng = np.random.default_rng(0)
+t = np.arange(120); y = 50 + 10 * np.sin(2 * np.pi * t / 7) + 0.15 * t + rng.normal(0, 3, 120)
+hist, fut = t[:100], t[100:]
+p50 = 50 + 10 * np.sin(2 * np.pi * fut / 7) + 0.15 * fut             # stand-in for model output
+spread = 3 * np.sqrt(np.arange(1, 21))
+p10, p90 = p50 - 1.28 * spread, p50 + 1.28 * spread
+fig, ax = plt.subplots(1, 2, figsize=(13, 3.6))
+ax[0].plot(hist, y[:100], c="k", lw=1, label="history"); ax[0].plot(fut, y[100:], c="k", ls=":", label="actual")
+ax[0].plot(fut, p50, c="C0", label="P50"); ax[0].fill_between(fut, p10, p90, alpha=0.25, label="P10–P90")
+ax[0].legend(); ax[0].set_title(f"coverage of P10–P90: {np.mean((y[100:] > p10) & (y[100:] < p90)):.0%} (target 80%)")
+resid = y[:100] - (50 + 10 * np.sin(2 * np.pi * hist / 7) + 0.15 * hist)
+ax[1].plot(hist, resid, ".", ms=4); ax[1].axhline(0, c="k"); ax[1].set_title("in-sample residuals: should look like noise")
+plt.tight_layout(); plt.savefig("fan_chart.png", dpi=110); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

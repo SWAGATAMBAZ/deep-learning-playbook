@@ -12,7 +12,7 @@
   <h1>Recommender systems</h1>
   <p class="lede">"Customers also bought", "Recommended credit card for you", the home feed. Every large e-commerce or fintech DS interview has a recsys question, usually framed as a <b>system design</b> problem.</p>
   <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Parameters &amp; tuning per model</div><p>Every model on this page has a card in the <a href="models.html#recsys">Model encyclopedia</a> with its key parameters, starting values, how to improve it and when to avoid it.</p></div>
-  <div class="toc"><a href="#funnel">The funnel</a><a href="#cf">Collaborative filtering</a><a href="#tt">Two-tower</a><a href="#rank">Ranking models</a><a href="#seq">Sequential</a><a href="#metrics">Metrics</a><a href="#issues">Cold start &amp; bias</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#funnel">The funnel</a><a href="#cf">Collaborative filtering</a><a href="#tt">Two-tower</a><a href="#rank">Ranking models</a><a href="#seq">Sequential</a><a href="#metrics">Metrics</a><a href="#issues">Cold start &amp; bias</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="funnel">The industry funnel (draw this first in any design round)</h2>
   <div class="grid">
@@ -101,6 +101,22 @@
         return F.cross_entropy(logits, labels)
 
     # serving: item_vecs = item_tower(all_items) -> FAISS index; per request: index.search(u, k=500)
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Plot the long tail and your recommendation coverage</h2>
+  <p>Interaction counts follow a power law. Plot item popularity (log–log) and mark which items your model actually recommends. A model that only surfaces the head has poor coverage and is reinforcing popularity bias. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: plot the long tail and your recommendation coverage">
+import numpy as np, matplotlib.pyplot as plt
+rng = np.random.default_rng(0)
+n_items = 5000
+counts = np.sort(rng.zipf(1.6, n_items))[::-1].astype(float)        # interactions per item
+recommended = np.zeros(n_items, bool); recommended[:300] = True; recommended[rng.choice(n_items, 150)] = True
+rank = np.arange(1, n_items + 1)
+plt.loglog(rank, counts, lw=1, label="item popularity")
+plt.scatter(rank[recommended], counts[recommended], s=6, c="r", label="items we recommend")
+head_share = counts[:int(0.2 * n_items)].sum() / counts.sum()
+plt.title(f"Long tail: top 20% of items = {head_share:.0%} of interactions | coverage {recommended.mean():.1%}")
+plt.xlabel("item rank"); plt.ylabel("interactions"); plt.legend(); plt.savefig("long_tail.png", dpi=120); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

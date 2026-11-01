@@ -11,7 +11,7 @@
   <h1>Anomaly detection &amp; graph neural networks</h1>
   <p class="lede">Fraud is rare, labels arrive late, and fraudsters work in <b>networks</b>. Two deep learning tools appear again and again in fintech: <b>autoencoders</b> to flag "this doesn't look normal", and <b>GNNs</b> to catch "this account is connected to bad actors".</p>
   <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Parameters &amp; tuning per model</div><p>Every model on this page has a card in the <a href="models.html#graph">Model encyclopedia</a> with its key parameters, starting values, how to improve it and when to avoid it.</p></div>
-  <div class="toc"><a href="#ae">Autoencoders</a><a href="#thr">Threshold live</a><a href="#vae">VAE</a><a href="#gnn">GNN intuition</a><a href="#types">GCN / SAGE / GAT</a><a href="#fin">Fintech uses</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#ae">Autoencoders</a><a href="#thr">Threshold live</a><a href="#vae">VAE</a><a href="#gnn">GNN intuition</a><a href="#types">GCN / SAGE / GAT</a><a href="#fin">Fintech uses</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="ae">Autoencoders: learn "normal", flag the rest</h2>
   <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Train a network to squeeze a transaction into a tiny summary (the <b>bottleneck</b>) and rebuild it. Train only on normal transactions. It becomes very good at rebuilding normal ones and bad at rebuilding anything it has never seen. So a <b>high reconstruction error = suspicious</b>. You need no fraud labels at all.</p></div>
@@ -96,6 +96,22 @@
     loss = F.binary_cross_entropy_with_logits(logits[data.train_mask], data.y[data.train_mask].float(),
                                               pos_weight=torch.tensor(20.0))
     # big graphs: torch_geometric.loader.NeighborLoader for mini-batch neighbour sampling
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Reconstruction-error histogram with the alert threshold</h2>
+  <p>Plot the anomaly score separately for known-normal and known-fraud cases (if you have some labels), with the threshold line. The overlap you see is your precision/recall trade-off. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: reconstruction-error histogram with the alert threshold">
+import numpy as np, matplotlib.pyplot as plt
+rng = np.random.default_rng(0)
+err_normal = rng.gamma(2.0, 0.5, 20000)                 # AE reconstruction errors on normal txns
+err_fraud = rng.gamma(6.0, 0.6, 120)                     # on confirmed frauds
+thr = np.percentile(err_normal, 99.5)
+bins = np.linspace(0, 10, 80)
+plt.hist(err_normal, bins, density=True, alpha=0.6, label="normal")
+plt.hist(err_fraud, bins, density=True, alpha=0.6, label="fraud")
+plt.axvline(thr, c="k", ls="--", label=f"99.5th pct threshold = {thr:.2f}")
+plt.yscale("log"); plt.xlabel("reconstruction error"); plt.legend()
+plt.title(f"recall at threshold: {np.mean(err_fraud > thr):.0%}"); plt.savefig("ae_hist.png", dpi=120); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>

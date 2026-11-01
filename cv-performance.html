@@ -11,7 +11,7 @@
   <div class="eyebrow">Computer vision III · How to make vision models better</div>
   <h1>The vision performance playbook</h1>
   <p class="lede">"Your image model is at 82%. Get it to 90%." This is the most common practical CV interview question. Here's the full toolbox: diagnose first, then pull <b>data</b>, <b>augmentation</b>, <b>training-recipe</b>, <b>architecture</b> and <b>inference</b> levers, roughly in order of payoff.</p>
-  <div class="toc"><a href="#diagnose">Diagnose by symptom</a><a href="#data">Data levers</a><a href="#aug">Augmentation live</a><a href="#recipe">Training recipe</a><a href="#hp">Hyperparameter table</a><a href="#backbone">Choosing a backbone</a><a href="#infer">Inference tricks</a><a href="#deploy">Speed &amp; size</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="toc"><a href="#diagnose">Diagnose by symptom</a><a href="#data">Data levers</a><a href="#aug">Augmentation live</a><a href="#recipe">Training recipe</a><a href="#hp">Hyperparameter table</a><a href="#backbone">Choosing a backbone</a><a href="#infer">Inference tricks</a><a href="#deploy">Speed &amp; size</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a><a href="#viz">🔍 Visualise</a></div>
 
   <h2 id="diagnose">Step 1: diagnose by symptom</h2>
   <div class="table-wrap"><table>
@@ -182,6 +182,23 @@
         p = model(x).softmax(-1)
         p += model(torch.flip(x, dims=[3])).softmax(-1)      # horizontal flip
         return p / 2
+  </script>
+
+  <h2 id="viz">🔍 Visualise it: Visualise augmentations and per-class accuracy</h2>
+  <p>Render one image through your augmentation pipeline many times to confirm it never destroys the label, then plot per-class accuracy to see where the remaining errors are. More techniques in the <a href="visualization.html">Visualisation &amp; debugging toolkit</a>.</p>
+  <script type="text/plain" class="snippet" data-title="visualise: visualise augmentations and per-class accuracy">
+import torch, torchvision, matplotlib.pyplot as plt
+from torchvision.transforms import v2
+torch.manual_seed(0)
+img = torch.zeros(3, 128, 128); img[0, 30:100, 20:110] = 1; img[2, 50:80, 40:90] = 1   # toy "card"
+aug = v2.Compose([v2.RandomResizedCrop(128, scale=(0.5, 1.0)), v2.RandomHorizontalFlip(),
+                  v2.ColorJitter(0.4, 0.4, 0.4, 0.05), v2.RandomRotation(15), v2.RandomErasing(p=0.3)])
+grid = torchvision.utils.make_grid(torch.stack([aug(img) for _ in range(16)]), nrow=8)
+fig, ax = plt.subplots(1, 2, figsize=(14, 3.4), gridspec_kw={"width_ratios": [3, 1]})
+ax[0].imshow(grid.permute(1, 2, 0).clamp(0, 1)); ax[0].axis("off"); ax[0].set_title("16 draws of the training augmentation")
+acc = {"ok": 0.97, "scratch": 0.81, "dent": 0.64, "crack": 0.52}    # from your validation set
+ax[1].barh(list(acc), list(acc.values())); ax[1].set_xlim(0, 1); ax[1].set_title("per-class accuracy")
+plt.tight_layout(); plt.savefig("aug_grid.png", dpi=110); plt.show()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>
