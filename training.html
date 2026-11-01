@@ -10,6 +10,7 @@
   <div class="eyebrow">Lesson 02 · Week 2 · Most asked in interviews</div>
   <h1>Training &amp; improving model performance</h1>
   <p class="lede">Knowing the architectures is the easy part. What interviewers really probe is whether you can <b>make a model train and generalise</b>: pick the learning rate, spot overfitting, handle imbalance, and debug a flat loss curve.</p>
+  <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Parameters &amp; tuning per model</div><p>Every model on this page has a card in the <a href="models.html#all">Model encyclopedia</a> with its key parameters, starting values, how to improve it and when to avoid it.</p></div>
   <div class="toc"><a href="#gdviz">Optimizers</a><a href="#lr">Learning rate</a><a href="#init">Initialisation</a><a href="#norm">Normalisation</a><a href="#reg">Regularisation</a><a href="#diag">Diagnose curves</a><a href="#imb">Imbalance</a><a href="#hp">Tuning</a><a href="#playbook">Improvement playbook</a><a href="#qa">Q&amp;A</a></div>
 
   <h2 id="gdviz">Optimizers: smarter ways to walk downhill</h2>
@@ -17,7 +18,7 @@
     <div class="widget-title">Gradient descent visualiser</div>
     <div class="widget-sub">A bumpy 1-D loss surface. Try a learning rate of 1.1 with SGD (it diverges), then Momentum (it rolls past the small dip), then Adam. Press <b>Run</b>.</div>
     <div class="controls">
-      <div class="control"><label>learning rate η <b id="lrv"></b></label><input type="range" id="lr" min="0.01" max="1.2" step="0.01" value="0.15"></div>
+      <div class="control"><label>learning rate η <b id="lrv"></b></label><input type="range" id="lrs" min="0.01" max="1.2" step="0.01" value="0.15"></div>
       <div class="control"><label>start position <b id="x0v"></b></label><input type="range" id="x0" min="-3.5" max="3.5" step="0.1" value="-3"></div>
       <div class="control"><label>optimizer</label><select id="opt"><option value="sgd">SGD</option><option value="mom">SGD + Momentum (β=0.9)</option><option value="adam">Adam</option></select></div>
       <div class="control" style="align-self:end"><button class="btn primary" id="run">▶ Run 40 steps</button></div>
@@ -206,7 +207,7 @@
     path.forEach((x,i)=>{const cx=Math.max(-4,Math.min(4,x));ctx.beginPath();ctx.arc(X(cx),Y(L(cx)),i===path.length-1?7:3.5,0,7);ctx.fillStyle=i===path.length-1?'#e2554f':'rgba(226,85,79,.5)';ctx.fill();});
   }
   function run(){
-    clearInterval(anim);const lr=+$('lr').value,opt=$('opt').value;let x=+$('x0').value,m=0,v=0,t=0;path=[x];
+    clearInterval(anim);const lr=+$('lrs').value,opt=$('opt').value;let x=+$('x0').value,m=0,v=0,t=0;path=[x];
     anim=setInterval(()=>{t++;const g=dL(x);
       if(opt==='sgd')x-=lr*g;
       else if(opt==='mom'){m=0.9*m+g;x-=lr*0.1*m;}
@@ -216,7 +217,7 @@
       $('gout').textContent=msg;
       if(t>=40||Math.abs(x)>6)clearInterval(anim);},70);
   }
-  ['lr','x0'].forEach(id=>$(id).addEventListener('input',()=>{$('lrv').textContent=(+$('lr').value).toFixed(2);$('x0v').textContent=(+$('x0').value).toFixed(1);path=[+$('x0').value];draw();}));
+  ['lrs','x0'].forEach(id=>$(id).addEventListener('input',()=>{$('lrv').textContent=(+$('lrs').value).toFixed(2);$('x0v').textContent=(+$('x0').value).toFixed(1);path=[+$('x0').value];draw();}));
   $('run').onclick=run;$('lrv').textContent='0.15';$('x0v').textContent='-3.0';path=[-3];
   // loss curve doctor
   const D={

@@ -66,7 +66,7 @@
   const T={
     q:"What does your input data look like?",o:[
       ["📊 Rows & columns (tabular)",{q:"How big is it, and is there extra signal?",o:[
-        ["Under ~10k rows",{r:"TabPFN or LightGBM/CatBoost",why:"Tiny data: trees or a pretrained tabular foundation model. DL from scratch will overfit.",next:"tabular.html"}],
+        ["Under ~50k rows",{r:"TabPFN-2.5 or LightGBM/CatBoost",why:"Small data: trees, or a pretrained tabular foundation model (TabPFN-2.5 is designed for up to 50k rows × 2k features). DL from scratch will overfit.",next:"tabular.html"}],
         ["Big, mostly engineered aggregates",{r:"LightGBM / XGBoost (+SHAP)",why:"Trees are the state of the art on engineered tabular features: fast, robust, explainable. Optionally ensemble with an MLP.",next:"tabular.html"}],
         ["Big + high-cardinality IDs",{r:"MLP with entity embeddings or FT-Transformer, ensembled with GBDT",why:"Embeddings share statistical strength across millions of categories, something one-hot/GBDT handles poorly.",next:"tabular.html"}],
         ["Big + raw event history per customer",{r:"GRU / transformer over events → embeddings → GBDT",why:"Sequence models learn behaviour patterns that hand-made aggregates miss; the GBDT keeps production robustness.",next:"rnn.html"}]]}],

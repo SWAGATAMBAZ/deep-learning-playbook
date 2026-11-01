@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CV II · Detection, segmentation & more · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+</head>
+<body data-page="cv-detection">
+<main>
+  <div class="eyebrow">Computer vision II · Week 3–4</div>
+  <h1>Detection, segmentation &amp; the rest of computer vision</h1>
+  <p class="lede">Classification answers "what is in this image?". Real products need "<b>where</b> is it?", "<b>which pixels</b>?", "<b>what does it say</b>?" and "<b>is this the same person</b>?". This page covers every major CV task, the models for each, their key parameters and how to make them better.</p>
+  <div class="toc"><a href="#tasks">Task map</a><a href="#boxes">Boxes &amp; IoU</a><a href="#nms">NMS live</a><a href="#map">mAP</a><a href="#det">Detector families</a><a href="#detknobs">Detection tuning</a><a href="#seg">Segmentation</a><a href="#segknobs">Segmentation tuning</a><a href="#other">Pose · tracking · OCR · similarity</a><a href="#found">Foundation models</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="tasks">The CV task map</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Task</th><th>Output</th><th>Go-to models (2026)</th><th>Metric</th><th>Industry example</th></tr>
+    <tr><td>Classification</td><td>One label per image</td><td>ConvNeXt V2, EfficientNetV2, ViT / DINOv3 backbone</td><td>Accuracy, macro-F1</td><td>Document type, product category</td></tr>
+    <tr><td>Object detection</td><td>Boxes + labels + scores</td><td>YOLO11 / YOLO26, RT-DETR, D-FINE, RF-DETR, Faster R-CNN</td><td>mAP@0.5, mAP@0.5:0.95</td><td>Shelf monitoring, damage parts, ID-card fields</td></tr>
+    <tr><td>Semantic segmentation</td><td>Class per pixel</td><td>U-Net, DeepLabv3+, SegFormer</td><td>mIoU, Dice</td><td>Medical scans, satellite land use</td></tr>
+    <tr><td>Instance segmentation</td><td>Mask per object</td><td>Mask R-CNN, YOLO-seg, Mask2Former, RF-DETR-Seg</td><td>Mask mAP</td><td>Counting items, car-damage area</td></tr>
+    <tr><td>Promptable / open-vocabulary</td><td>Masks/boxes for any prompt</td><td>SAM 2 (points/boxes, video), SAM 3 (text concepts), Grounding DINO, YOLOE</td><td>Zero-shot AP</td><td>Auto-labelling, new categories without retraining</td></tr>
+    <tr><td>Pose / keypoints</td><td>Body or object keypoints</td><td>YOLO-pose, HRNet, RTMPose</td><td>OKS-mAP</td><td>Fitness apps, liveness checks</td></tr>
+    <tr><td>Tracking</td><td>Object IDs across frames</td><td>Detector + ByteTrack / DeepSORT; SAM 2 for masks</td><td>MOTA, IDF1, HOTA</td><td>Retail footfall, warehouse safety</td></tr>
+    <tr><td>OCR / documents</td><td>Text, key–value fields</td><td>DBNet + CRNN/TrOCR, PaddleOCR, LayoutLMv3, Donut, vision-language models</td><td>CER/WER, field accuracy</td><td>KYC, invoices, cheques</td></tr>
+    <tr><td>Similarity / verification</td><td>Embedding vectors</td><td>ArcFace, Siamese/triplet nets, CLIP, DINOv3</td><td>Recall@K, TAR@FAR</td><td>Face match in e-KYC, visual search</td></tr>
+  </table></div>
+
+  <h2 id="boxes">Bounding boxes and IoU</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>A detector draws rectangles. To grade one, ask "how much does my rectangle overlap the true one?" <b>IoU</b> (Intersection over Union) is that overlap as a fraction: 1 means perfect, 0 means they don't touch. A prediction usually counts as correct when IoU ≥ 0.5.</p></div>
+  <div class="callout math"><div class="tag">📐 IoU</div><div class="formula">IoU = area(A ∩ B) / area(A ∪ B) = inter / (area<sub>A</sub> + area<sub>B</sub> − inter)</div>
+  <p><b>Box formats trip people up</b>: <code>xyxy</code> (corners, used by torchvision), <code>xywh</code> (top-left + size, COCO), <code>cxcywh</code> normalised to 0–1 (YOLO label files). Mixing them up is the #1 cause of "my mAP is zero".</p>
+  <p>Box-regression losses evolved from L1 → IoU loss → <b>GIoU / DIoU / CIoU</b>. These still give a useful gradient when the boxes don't overlap, and they also penalise centre distance and aspect ratio.</p></div>
+  <div class="widget">
+    <div class="widget-title">IoU playground</div>
+    <div class="widget-sub">The green box is ground truth and the purple box is the prediction. Move the prediction and watch IoU cross the 0.5 "correct" line.</div>
+    <div class="controls">
+      <div class="control"><label>pred x-shift <b id="pxv"></b></label><input type="range" id="px" min="-120" max="120" value="30"></div>
+      <div class="control"><label>pred y-shift <b id="pyv"></b></label><input type="range" id="py" min="-90" max="90" value="15"></div>
+      <div class="control"><label>pred scale <b id="psv"></b></label><input type="range" id="ps" min="0.4" max="1.8" step="0.05" value="1.1"></div>
+    </div>
+    <canvas id="iouc"></canvas>
+    <div class="readout" id="iouout"></div>
+  </div>
+
+  <h2 id="nms">Non-maximum suppression (NMS)</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>A detector fires many overlapping boxes on the same object. NMS cleans up: keep the most confident box, delete every box that overlaps it by more than a threshold, then repeat with the next most confident survivor.</p></div>
+  <div class="widget">
+    <div class="widget-title">NMS live</div>
+    <div class="widget-sub">Two cars, nine raw predictions. Faded boxes are removed. Too low an IoU threshold merges neighbouring cars; too high leaves duplicates.</div>
+    <div class="controls">
+      <div class="control"><label>confidence threshold <b id="ctv"></b></label><input type="range" id="ct" min="0.05" max="0.9" step="0.05" value="0.25"></div>
+      <div class="control"><label>NMS IoU threshold <b id="ntv"></b></label><input type="range" id="nt" min="0.1" max="0.95" step="0.05" value="0.5"></div>
+    </div>
+    <canvas id="nmsc"></canvas>
+    <div class="readout" id="nmsout"></div>
+  </div>
+  <div class="callout interview"><div class="tag">🎯 Interview point</div><p>NMS is hand-tuned, sequential post-processing that adds latency and fails in crowds (two overlapping people get merged). Fixes: <b>Soft-NMS</b> (decay scores instead of deleting), class-aware NMS, or <b>NMS-free</b> detectors. DETR-style models (RT-DETR, D-FINE, RF-DETR) and YOLOv10 / YOLO26 use one-to-one matching, so each object gets exactly one prediction.</p></div>
+
+  <h2 id="map">mAP: the detection metric</h2>
+  <ol>
+    <li>For each class, sort predictions by confidence. A prediction is a <b>true positive</b> if IoU ≥ threshold with an unmatched ground-truth box; otherwise it's a false positive.</li>
+    <li>Sweep the confidence threshold to trace the precision–recall curve. <b>AP</b> is the area under it (interpolated).</li>
+    <li><b>mAP</b> is the mean of AP over classes. <b>mAP@0.5</b> (PASCAL VOC) is lenient on localisation. <b>mAP@0.5:0.95</b> (COCO) averages over IoU thresholds 0.5, 0.55, …, 0.95 and rewards tight boxes.</li>
+    <li>COCO also reports AP<sub>S</sub>/AP<sub>M</sub>/AP<sub>L</sub> for small (&lt;32² px), medium and large objects. Check AP<sub>S</sub> if small objects matter to you.</li>
+  </ol>
+  <div class="callout trap"><div class="tag">⚠️ Business ≠ mAP</div><p>mAP averages over all thresholds, but production runs at one threshold. Report precision and recall at your operating threshold, per class, and a confusion matrix (including the "background" class), alongside mAP.</p></div>
+
+  <h2 id="det">Detector families</h2>
+  <div class="grid two">
+    <div class="card"><div class="kicker">TWO-STAGE · 2015→</div><h4>Faster R-CNN (+ FPN)</h4><p>Stage 1: a <b>Region Proposal Network</b> slides anchors over the feature map and proposes ~1–2k "objectness" boxes. Stage 2: <b>RoIAlign</b> crops features per proposal, then a head classifies and refines each box. <b>FPN</b> adds a top-down feature pyramid for multi-scale objects. Accurate and flexible, but slower. <b>Mask R-CNN</b> adds a mask head.</p></div>
+    <div class="card"><div class="kicker">ONE-STAGE · 2016→</div><h4>SSD, RetinaNet, YOLO</h4><p>Predict class + box densely at every grid cell in one pass. <b>RetinaNet</b> introduced <b>focal loss</b> to fix the extreme foreground/background imbalance of dense prediction. <b>YOLO</b> (v1 2016 → YOLOv8 → YOLO11 → YOLO26 in Jan 2026) is the real-time workhorse: anchor-free heads, CSP backbones, mosaic augmentation and a strong training recipe out of the box.</p></div>
+    <div class="card"><div class="kicker">TRANSFORMER · 2020→</div><h4>DETR family</h4><p>Treats detection as <b>set prediction</b>: a fixed set of learned object queries attends to image features, and <b>Hungarian matching</b> assigns each ground-truth box to one query during training, so there are no anchors and no NMS. The original DETR trained slowly. Deformable DETR, DINO-DETR, <b>RT-DETR</b> (first real-time DETR, 2023), <b>D-FINE</b> and <b>DEIM</b> (faster convergence) and <b>RF-DETR</b> (DINOv2 backbone, strong domain transfer) closed the gap and now match or beat YOLO on accuracy per latency.</p></div>
+    <div class="card"><div class="kicker">OPEN-VOCABULARY · 2022→</div><h4>Grounding DINO, OWL-ViT, YOLO-World / YOLOE, SAM 3</h4><p>Detect classes described in <b>text</b> ("damaged bumper") without training on them. Great for auto-labelling and long-tail categories. Usually fine-tune a closed-set detector on the auto-labels for production speed and accuracy.</p></div>
+  </div>
+  <div class="table-wrap"><table>
+    <tr><th>Need</th><th>Pick</th><th>Why</th></tr>
+    <tr><td>Real-time on edge / GPU, fast iteration</td><td>YOLO11 / YOLO26 (n/s/m sizes)</td><td>Best tooling, export to ONNX/TensorRT/CoreML. <b>Licence: AGPL-3.0</b> (commercial closed-source use needs an Ultralytics enterprise licence)</td></tr>
+    <tr><td>Real-time with a permissive licence</td><td>RT-DETR, D-FINE, DEIM, RF-DETR (Apache-2.0)</td><td>NMS-free, competitive accuracy-per-latency</td></tr>
+    <tr><td>Maximum accuracy, latency less important</td><td>Large DETR variants / Co-DETR, Cascade R-CNN with a strong backbone</td><td>Best COCO numbers; heavy</td></tr>
+    <tr><td>Very small or few training images, new domain</td><td>RF-DETR / DINOv3-backbone detectors, or open-vocab + fine-tune</td><td>Strong pretrained features transfer better</td></tr>
+    <tr><td>Rotated objects (aerial, documents)</td><td>OBB variants (YOLO-OBB)</td><td>Axis-aligned boxes waste area on rotated objects</td></tr>
+  </table></div>
+
+  <h2 id="detknobs">Detection: parameters &amp; how to improve</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Knob</th><th>Typical value</th><th>Effect / when to change</th></tr>
+    <tr><td>Input size <code>imgsz</code></td><td>640 (YOLO); 512–1024</td><td>↑ for small objects (accuracy ↑, latency ~ quadratic ↑). Train and infer at the same size.</td></tr>
+    <tr><td>Model size (n/s/m/l/x)</td><td>s or m to start</td><td>Bigger = more accurate and slower. Pick by latency budget, then tune data.</td></tr>
+    <tr><td>Epochs</td><td>100–300 (from COCO weights)</td><td>Small datasets converge fast; watch val mAP and use patience/early stop.</td></tr>
+    <tr><td>Batch / LR</td><td>16–64; SGD lr0 0.01 or AdamW ~1e-3 (auto in YOLO)</td><td>Scale the LR with batch; warm-up epochs ~3.</td></tr>
+    <tr><td>Mosaic / MixUp / copy-paste</td><td>mosaic 1.0, closed for the last ~10 epochs</td><td>Big gains on small datasets; turning mosaic off at the end aligns training with real images.</td></tr>
+    <tr><td>conf threshold (inference)</td><td>0.25 default; tune per class</td><td>Trades precision against recall. Pick from the PR curve and business cost, not the default.</td></tr>
+    <tr><td>NMS IoU</td><td>0.45–0.7</td><td>Lower merges more (bad in crowds); higher keeps duplicates.</td></tr>
+    <tr><td>Anchors (anchor-based models)</td><td>k-means on your boxes</td><td>Mismatched anchor shapes hurt recall for unusual aspect ratios. Anchor-free models avoid this.</td></tr>
+    <tr><td>Loss weights (box/cls/dfl)</td><td>defaults</td><td>Raise box weight if localisation (mAP@0.75) lags; class weights or focal loss for imbalance.</td></tr>
+  </table></div>
+  <div class="callout win"><div class="tag">✅ Detection improvement checklist, in order of payoff</div>
+  <ol>
+    <li><b>Label quality</b>: consistent box tightness, no missing boxes (missing labels teach the model that objects are background), clear class definitions. Audit 100 random images by hand.</li>
+    <li><b>Representative data</b>: lighting, angles, devices, backgrounds from production. Add <b>hard negatives</b> (look-alike backgrounds) to cut false positives.</li>
+    <li><b>Small objects</b>: larger <code>imgsz</code>, tiled inference (SAHI), a high-resolution P2 head, avoid over-downscaling.</li>
+    <li><b>Class imbalance</b>: oversample images containing rare classes, focal loss, copy-paste augmentation.</li>
+    <li><b>Model and recipe</b>: bigger variant, longer training, stronger pretrained backbone, EMA weights.</li>
+    <li><b>Inference</b>: per-class thresholds, TTA (flip + multi-scale), ensemble with Weighted Boxes Fusion (WBF) for offline jobs.</li>
+  </ol></div>
+
+  <h2 id="seg">Segmentation</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Segmentation colours in the image instead of boxing it. <b>Semantic</b>: every pixel gets a class ("road", "car"), but two cars share one blob. <b>Instance</b>: each car gets its own mask. <b>Panoptic</b>: both at once.</p></div>
+  <div class="grid two">
+    <div class="card"><h4>FCN → U-Net (2015)</h4><p>An encoder downsamples to learn <i>what</i>, a decoder upsamples to recover <i>where</i>, and <b>skip connections</b> copy fine detail from encoder to decoder. Still the default for medical and industrial images, and works with a few hundred labelled images.</p></div>
+    <div class="card"><h4>DeepLabv3+ (2018)</h4><p><b>Atrous (dilated) convolutions</b> enlarge the receptive field without losing resolution. <b>ASPP</b> pools context at several dilation rates. Strong for scenes and satellite imagery.</p></div>
+    <div class="card"><h4>Mask R-CNN (2017)</h4><p>Faster R-CNN plus a small mask head per box, using RoIAlign for pixel accuracy. The classic instance-segmentation model.</p></div>
+    <div class="card"><h4>SegFormer / Mask2Former (2021)</h4><p>Transformer encoders with light decoders. Mask2Former handles semantic, instance and panoptic segmentation in one architecture using masked attention.</p></div>
+    <div class="card"><h4>SAM → SAM 2 → SAM 3 (2023–25)</h4><p>Promptable foundation models. SAM takes points or boxes and returns masks. SAM 2 adds video with memory. SAM 3 (Nov 2025) segments <b>every instance of a text concept</b> ("shipping container") in images and video. Use them for <b>auto-labelling</b>, then distil into a small task model.</p></div>
+  </div>
+  <div class="callout math"><div class="tag">📐 Segmentation losses</div>
+    <p><b>Pixel BCE / cross-entropy</b>: per-pixel classification, dominated by the background when objects are small. <b>Dice loss</b> = 1 − 2|P∩G| / (|P| + |G|) optimises overlap directly and is robust to imbalance. <b>BCE + Dice</b> is the usual default. Use <b>Focal</b> or <b>Tversky</b> to weight false negatives more (lesions, cracks). Metrics: IoU (Jaccard) and Dice, with Dice = 2·IoU / (1 + IoU).</p>
+  </div>
+
+  <h2 id="segknobs">Segmentation: parameters &amp; how to improve</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Knob</th><th>Typical</th><th>Notes</th></tr>
+    <tr><td>Encoder (backbone)</td><td>ResNet-34/50, EfficientNet, ConvNeXt, MiT (SegFormer)</td><td>Pretrained encoder is the single biggest gain on small data</td></tr>
+    <tr><td>Input resolution / patching</td><td>512–1024; tile big images with overlap</td><td>Thin structures (cracks, vessels) need high resolution; stitch tiles with overlap and blending</td></tr>
+    <tr><td>Loss</td><td>BCE + Dice; Focal/Tversky for tiny targets</td><td>Pick from the error type you see: missed regions → weight recall</td></tr>
+    <tr><td>Augmentation</td><td>Flips, rotations, elastic, brightness/contrast</td><td>Apply the <b>same</b> geometric transform to image and mask (albumentations does this)</td></tr>
+    <tr><td>Post-processing</td><td>Threshold tuning, morphological open/close, remove small components</td><td>Cheap and often +1–3 Dice</td></tr>
+    <tr><td>Labelling</td><td>SAM-assisted polygons</td><td>10× faster masks; review boundaries</td></tr>
+  </table></div>
+
+  <h2 id="other">Pose, tracking, OCR and similarity</h2>
+  <div class="grid two">
+    <div class="card"><h4>Pose / keypoints</h4><p>Predict heatmaps per keypoint (HRNet keeps high resolution throughout) or regress keypoints with the box (YOLO-pose, RTMPose). Metric: OKS-based AP. Use: liveness detection ("turn your head"), fitness, ergonomics.</p></div>
+    <div class="card"><h4>Multi-object tracking</h4><p><b>Tracking-by-detection</b>: run a detector per frame, predict motion with a Kalman filter, associate boxes across frames with the Hungarian algorithm on IoU and appearance embeddings (DeepSORT). <b>ByteTrack</b> also associates low-confidence boxes, which reduces ID switches during occlusion.</p></div>
+    <div class="card"><h4>OCR pipeline</h4><p>(1) <b>Text detection</b> (DBNet, CRAFT) finds text regions. (2) <b>Recognition</b> turns crops into strings: CRNN (CNN + BiLSTM + <b>CTC loss</b>, which aligns unsegmented sequences) or transformer TrOCR. (3) <b>Layout and key–value extraction</b>: LayoutLMv3 (text + position + image), Donut (OCR-free), or a vision-language model. Metric: character error rate (CER).</p></div>
+    <div class="card"><h4>Similarity &amp; verification</h4><p>Learn an embedding where same-identity images are close. <b>Triplet loss</b> (anchor, positive, negative with a margin), <b>contrastive</b>, or <b>ArcFace</b> (additive angular margin on a normalised softmax, the face-recognition standard). Serve with ANN search. Metric: TAR at a fixed FAR (e.g. 1e-4) for e-KYC face match.</p></div>
+  </div>
+
+  <h2 id="found">Vision foundation models: what changed by 2026</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Model</th><th>What it is</th><th>Use it to</th></tr>
+    <tr><td><b>CLIP / SigLIP</b></td><td>Image and text encoders trained contrastively on image–caption pairs</td><td>Zero-shot classification ("a photo of a {class}"), text-to-image search, multimodal features</td></tr>
+    <tr><td><b>DINOv2 / DINOv3</b></td><td>Self-supervised ViTs (DINOv3: Aug 2025, up to 7B parameters, 1.7B images, plus distilled ConvNeXt variants)</td><td>A <b>frozen</b> backbone with a light head for classification, retrieval, segmentation and depth, especially with little labelled data</td></tr>
+    <tr><td><b>MAE</b></td><td>Masked autoencoder: hide 75% of patches and reconstruct them</td><td>Self-supervised pretraining on your own unlabelled domain images</td></tr>
+    <tr><td><b>SAM 2 / SAM 3</b></td><td>Promptable segmentation (points/boxes/video; text concepts in SAM 3)</td><td>Labelling, interactive tools, zero-shot masks</td></tr>
+    <tr><td><b>Vision-language models</b></td><td>LLMs that read images</td><td>Document Q&amp;A, captioning, flexible extraction. Validate accuracy and cost against a specialised model.</td></tr>
+  </table></div>
+
+  <h2 id="code">Code</h2>
+  <script type="text/plain" class="snippet" data-title="IoU and NMS from scratch (asked in coding rounds)">
+    import numpy as np
+
+    def iou(box, boxes):
+        """box: (4,) xyxy, boxes: (N,4) xyxy -> (N,) IoU"""
+        x1 = np.maximum(box[0], boxes[:, 0]); y1 = np.maximum(box[1], boxes[:, 1])
+        x2 = np.minimum(box[2], boxes[:, 2]); y2 = np.minimum(box[3], boxes[:, 3])
+        inter = np.clip(x2 - x1, 0, None) * np.clip(y2 - y1, 0, None)
+        area = lambda b: (b[..., 2] - b[..., 0]) * (b[..., 3] - b[..., 1])
+        return inter / (area(box) + area(boxes) - inter + 1e-9)
+
+    def nms(boxes, scores, iou_thr=0.5):
+        order = scores.argsort()[::-1]            # highest score first
+        keep = []
+        while order.size > 0:
+            i = order[0]
+            keep.append(i)
+            rest = order[1:]
+            order = rest[iou(boxes[i], boxes[rest]) < iou_thr]   # drop heavy overlaps
+        return keep
+
+    boxes = np.array([[10, 10, 50, 50], [12, 12, 52, 52], [100, 100, 140, 140]], float)
+    print(nms(boxes, np.array([0.9, 0.8, 0.7])))   # -> [0, 2]
+  </script>
+  <script type="text/plain" class="snippet" data-title="Ultralytics YOLO: train, validate, predict, export">
+    from ultralytics import YOLO
+
+    model = YOLO("yolo11s.pt")            # or "yolo26s.pt"; COCO-pretrained (AGPL-3.0 licence)
+    model.train(data="damage.yaml",       # paths + class names; labels in YOLO txt format
+                epochs=150, imgsz=640, batch=16,
+                patience=30,              # early stopping
+                close_mosaic=10,          # disable mosaic for the last 10 epochs
+                cos_lr=True, seed=0)
+    metrics = model.val()                 # metrics.box.map50, metrics.box.map (0.5:0.95)
+    results = model.predict("claim_123.jpg", conf=0.35, iou=0.5)
+    model.export(format="onnx")           # or "engine" (TensorRT), "coreml", "tflite"
+  </script>
+  <script type="text/plain" class="snippet" data-title="torchvision Faster R-CNN: swap the head for your classes">
+    import torchvision
+    from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
+    from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+
+    model = fasterrcnn_resnet50_fpn_v2(weights="DEFAULT")
+    in_feats = model.roi_heads.box_predictor.cls_score.in_features
+    model.roi_heads.box_predictor = FastRCNNPredictor(in_feats, num_classes=N_CLASSES + 1)  # +1 background
+
+    # dataset must return image tensor and target = {"boxes": FloatTensor[N,4] xyxy, "labels": Int64Tensor[N]}
+    model.train()
+    loss_dict = model(images, targets)    # dict of rpn + roi losses
+    loss = sum(loss_dict.values())
+  </script>
+  <script type="text/plain" class="snippet" data-title="U-Net with a pretrained encoder + BCE+Dice (segmentation_models_pytorch)">
+    import segmentation_models_pytorch as smp, torch
+
+    model = smp.Unet(encoder_name="resnet34", encoder_weights="imagenet",
+                     in_channels=3, classes=1)                 # binary mask
+    dice = smp.losses.DiceLoss(mode="binary")
+    bce  = torch.nn.BCEWithLogitsLoss()
+    loss_fn = lambda logits, y: bce(logits, y) + dice(logits, y)
+
+    def iou_score(logits, y, thr=0.5):
+        p = (torch.sigmoid(logits) > thr).float()
+        inter = (p * y).sum((1, 2, 3)); union = ((p + y) > 0).float().sum((1, 2, 3))
+        return (inter / (union + 1e-9)).mean()
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>One-stage vs two-stage detectors?</summary><div class="ans"><p>Two-stage (Faster R-CNN) first proposes regions, then classifies and refines each. It's more accurate on small or crowded objects but slower. One-stage (YOLO, RetinaNet) predicts densely in one pass. It's faster but faces extreme foreground/background imbalance, which focal loss and better label assignment address. Modern one-stage and DETR models have largely closed the accuracy gap.</p></div></details>
+  <details class="qa"><summary>Explain NMS and its weaknesses.</summary><div class="ans"><p>Sort by score, keep the top box, suppress boxes with IoU above a threshold, repeat. Weaknesses: one hand-tuned threshold, it suppresses true neighbours in crowds, and it's sequential post-processing that adds latency. Alternatives: Soft-NMS, WBF for ensembles, NMS-free models with one-to-one matching (DETR, YOLOv10/YOLO26).</p></div></details>
+  <details class="qa"><summary>What is Hungarian matching in DETR?</summary><div class="ans"><p>DETR outputs a fixed set of N predictions. During training, the Hungarian algorithm finds the one-to-one assignment between predictions and ground-truth objects that minimises a cost (class probability + L1 + GIoU). Unmatched predictions are trained to predict "no object". Because each object maps to exactly one query, there are no duplicates and no NMS.</p></div></details>
+  <details class="qa"><summary>mAP@0.5 vs mAP@0.5:0.95?</summary><div class="ans"><p>mAP@0.5 counts a detection correct at IoU ≥ 0.5, which is lenient on localisation. COCO mAP averages AP over IoU thresholds 0.5 to 0.95 in steps of 0.05, so it rewards precise boxes. If mAP@0.5 is high but mAP@0.5:0.95 is low, the model finds objects but boxes them loosely.</p></div></details>
+  <details class="qa"><summary>Your detector misses small objects. What do you do?</summary><div class="ans"><p>Increase input resolution or use tiled inference (SAHI), use an FPN or an extra high-resolution P2 head, check anchors (if anchor-based), avoid augmentations that shrink objects further, oversample small-object images, and confirm the labels actually include small instances. Measure AP<sub>S</sub> specifically.</p></div></details>
+  <details class="qa"><summary>Too many false positives on background. Fixes?</summary><div class="ans"><p>Add hard-negative images (background-only images that look similar), raise or tune per-class confidence thresholds, check for label noise (unlabelled objects confuse the model), add a classifier as a second-stage verifier, and collect more diverse backgrounds.</p></div></details>
+  <details class="qa"><summary>Dice vs IoU, and why Dice loss?</summary><div class="ans"><p>Both measure overlap; Dice = 2·IoU/(1+IoU), so Dice is always ≥ IoU. Dice loss directly optimises overlap and isn't swamped by the many background pixels the way per-pixel cross-entropy is, so it's preferred for small foreground objects. In practice you combine it with BCE for stable gradients.</p></div></details>
+  <details class="qa"><summary>Why does U-Net need skip connections?</summary><div class="ans"><p>Downsampling discards spatial detail. The decoder knows <i>what</i> is there but not exactly <i>where</i>. Skip connections pass high-resolution encoder features straight to the matching decoder level, so boundaries come out sharp.</p></div></details>
+  <details class="qa"><summary>How would you build e-KYC face matching?</summary><div class="ans"><p>Detect and align the face on the ID card and on the selfie (landmarks), embed both with an ArcFace-type model, compare cosine similarity against a threshold chosen for a target false-accept rate (e.g. 1e-4), and add a liveness / anti-spoofing model (passive texture CNN or active challenge). Monitor performance across demographic groups for fairness, and keep a human-review band near the threshold.</p></div></details>
+  <details class="qa"><summary>How would you label 50,000 images cheaply?</summary><div class="ans"><p>Bootstrap with foundation models: open-vocabulary detection (Grounding DINO, YOLOE, SAM 3) or SAM for masks. Have humans review and correct a stratified sample. Train a task model, then use <b>active learning</b> (label the images where the model is least certain) for the next rounds. Track label quality with inter-annotator agreement.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  function iouBox(a,b){const x1=Math.max(a[0],b[0]),y1=Math.max(a[1],b[1]),x2=Math.min(a[2],b[2]),y2=Math.min(a[3],b[3]);const i=Math.max(0,x2-x1)*Math.max(0,y2-y1);const A=(a[2]-a[0])*(a[3]-a[1]),B=(b[2]-b[0])*(b[3]-b[1]);return i/(A+B-i);}
+  function drawIoU(){
+    const dx=+$('px').value,dy=+$('py').value,s=+$('ps').value;$('pxv').textContent=dx;$('pyv').textContent=dy;$('psv').textContent=s.toFixed(2)+'×';
+    const {ctx,w,h,col}=DLP_canvas($('iouc'),260);ctx.clearRect(0,0,w,h);
+    const cx=w/2,cy=h/2,gw=170,gh=120;const g=[cx-gw/2,cy-gh/2,cx+gw/2,cy+gh/2];
+    const pw=gw*s,ph=gh*s,pcx=cx+dx,pcy=cy+dy;const p=[pcx-pw/2,pcy-ph/2,pcx+pw/2,pcy+ph/2];
+    const x1=Math.max(g[0],p[0]),y1=Math.max(g[1],p[1]),x2=Math.min(g[2],p[2]),y2=Math.min(g[3],p[3]);
+    if(x2>x1&&y2>y1){ctx.fillStyle='rgba(226,85,79,.35)';ctx.fillRect(x1,y1,x2-x1,y2-y1);}
+    ctx.lineWidth=3;ctx.strokeStyle='#15803d';ctx.strokeRect(g[0],g[1],gw,gh);ctx.strokeStyle=col('--accent');ctx.setLineDash([7,5]);ctx.strokeRect(p[0],p[1],pw,ph);ctx.setLineDash([]);
+    ctx.font='12px ui-monospace';ctx.fillStyle='#15803d';ctx.fillText('ground truth',g[0]+4,g[1]-6);ctx.fillStyle=col('--accent');ctx.fillText('prediction',p[0]+4,p[3]+14);
+    const v=iouBox(g,p);
+    $('iouout').innerHTML=`IoU = <b>${v.toFixed(3)}</b> &nbsp;→&nbsp; ${v>=.5?'<span style="color:var(--green)">counts as a TP at mAP@0.5</span>':'<span style="color:var(--coral)">false positive at mAP@0.5</span>'} &nbsp;|&nbsp; ${v>=.75?'also a TP at IoU 0.75':'fails the stricter 0.75 threshold'} &nbsp;|&nbsp; Dice = ${(2*v/(1+v)).toFixed(3)}`;
+  }
+  ['px','py','ps'].forEach(id=>$(id).addEventListener('input',drawIoU));
+  // NMS: two cars, raw predictions [x,y,w,h,score] in a 600x260 frame
+  const preds=[[70,60,190,120,.92],[80,70,180,115,.81],[60,55,205,130,.66],[95,50,170,120,.35],[230,75,190,115,.88],[245,70,180,120,.74],[220,85,200,105,.52],[440,40,90,70,.18],[400,150,120,70,.12]];
+  function drawNMS(){
+    const ct=+$('ct').value,nt=+$('nt').value;$('ctv').textContent=ct.toFixed(2);$('ntv').textContent=nt.toFixed(2);
+    const {ctx,w,h,col}=DLP_canvas($('nmsc'),280);ctx.clearRect(0,0,w,h);const sx=w/620;
+    ctx.fillStyle=col('--line');[[75,70,180,110],[235,80,180,105]].forEach(c=>{ctx.beginPath();ctx.roundRect?ctx.roundRect(c[0]*sx,c[1],c[2]*sx,c[3],18):ctx.rect(c[0]*sx,c[1],c[2]*sx,c[3]);ctx.fill();});
+    const B=preds.map(p=>[p[0],p[1],p[0]+p[2],p[1]+p[3],p[4]]);
+    let order=B.map((b,i)=>i).filter(i=>B[i][4]>=ct).sort((a,b)=>B[b][4]-B[a][4]);const keep=[];
+    while(order.length){const i=order.shift();keep.push(i);order=order.filter(j=>iouBox(B[i],B[j])<nt);}
+    B.forEach((b,i)=>{const k=keep.includes(i),below=b[4]<ct;ctx.globalAlpha=k?1:.18;ctx.strokeStyle=k?'#e2554f':col('--muted');ctx.lineWidth=k?3:1.5;ctx.strokeRect(b[0]*sx,b[1],(b[2]-b[0])*sx,b[3]-b[1]);ctx.fillStyle=k?'#e2554f':col('--muted');ctx.font='11px ui-monospace';ctx.fillText(b[4].toFixed(2)+(below?' (low conf)':''),b[0]*sx+3,b[1]+12);});
+    ctx.globalAlpha=1;
+    const verdict=keep.length===2?'<span style="color:var(--green)">exactly one box per car ✓</span>':keep.length<2?'<span style="color:var(--coral)">a car was lost (threshold too strict / IoU too low)</span>':'<span style="color:var(--coral)">duplicates or false positives remain</span>';
+    $('nmsout').innerHTML=`kept <b>${keep.length}</b> of ${B.length} boxes → ${verdict}`;
+  }
+  ['ct','nt'].forEach(id=>$(id).addEventListener('input',drawNMS));
+  drawIoU();drawNMS();window.addEventListener('resize',()=>{drawIoU();drawNMS();});window.addEventListener('dlp-theme',()=>{drawIoU();drawNMS();});
+})();
+</script>
+</body>
+</html>

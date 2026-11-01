@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CV III · Vision performance playbook · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+<style>.augwrap{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px}.augwrap figure{margin:0}.augwrap figcaption{font-size:12px;color:var(--muted);text-align:center;margin-top:4px}@media(max-width:700px){.augwrap{grid-template-columns:1fr}}</style>
+</head>
+<body data-page="cv-performance">
+<main>
+  <div class="eyebrow">Computer vision III · How to make vision models better</div>
+  <h1>The vision performance playbook</h1>
+  <p class="lede">"Your image model is at 82%. Get it to 90%." This is the most common practical CV interview question. Here's the full toolbox: diagnose first, then pull <b>data</b>, <b>augmentation</b>, <b>training-recipe</b>, <b>architecture</b> and <b>inference</b> levers, roughly in order of payoff.</p>
+  <div class="toc"><a href="#diagnose">Diagnose by symptom</a><a href="#data">Data levers</a><a href="#aug">Augmentation live</a><a href="#recipe">Training recipe</a><a href="#hp">Hyperparameter table</a><a href="#backbone">Choosing a backbone</a><a href="#infer">Inference tricks</a><a href="#deploy">Speed &amp; size</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="diagnose">Step 1: diagnose by symptom</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Symptom</th><th>Likely cause</th><th>Fix, in order</th></tr>
+    <tr><td>Train acc high, val acc low</td><td>Overfitting / too little data</td><td>Stronger augmentation (RandAugment, MixUp/CutMix) → pretrained backbone → freeze more layers → weight decay, drop-path, label smoothing → more data / active learning</td></tr>
+    <tr><td>Train acc also low</td><td>Underfitting / bug / LR wrong</td><td>Overfit one batch (sanity check) → check labels and normalisation → raise LR or train longer → bigger backbone → reduce augmentation strength</td></tr>
+    <tr><td>Good val, bad in production</td><td>Domain shift (camera, lighting, compression, crop)</td><td>Collect production samples → augment to mimic them (JPEG, blur, colour, perspective) → fine-tune on a small in-domain set → monitor embedding drift</td></tr>
+    <tr><td>Two classes constantly confused</td><td>Fine-grained difference or label ambiguity</td><td>Look at the confused pairs → clarify labelling guidelines → higher resolution → crop to the region of interest → metric-learning or hierarchical labels</td></tr>
+    <tr><td>Rare class recall poor</td><td>Imbalance</td><td>Class-balanced sampling → weighted / focal loss → targeted data collection → per-class threshold tuning</td></tr>
+    <tr><td>Model relies on the wrong cue</td><td>Shortcut learning (watermark, background, ruler in medical images)</td><td>Grad-CAM to confirm → remove or randomise the cue → background augmentation / cropping → collect counter-examples</td></tr>
+    <tr><td>Probabilities over-confident</td><td>Miscalibration</td><td>Temperature scaling on validation → label smoothing → MixUp</td></tr>
+    <tr><td>Too slow for production</td><td>Model or resolution too large</td><td>Smaller backbone or input size → distillation → INT8/FP16 quantisation → TensorRT / ONNX Runtime</td></tr>
+  </table></div>
+
+  <h2 id="data">Step 2: data levers (usually the biggest win)</h2>
+  <div class="grid">
+    <div class="card"><div class="kicker">labels</div><h4>Fix label noise</h4><p>Review the highest-loss training images; they're often mislabelled. Tools like cleanlab rank suspicious labels. A few percent of noisy labels can cost several points of accuracy.</p></div>
+    <div class="card"><div class="kicker">coverage</div><h4>Cover the long tail</h4><p>Slice errors by device, lighting, region and category. Collect data for the worst slices, not more of what you already have.</p></div>
+    <div class="card"><div class="kicker">active learning</div><h4>Label smartly</h4><p>Label the images the model is least sure about (lowest max-probability, highest entropy, ensemble disagreement). You get more accuracy per labelled image than with random sampling.</p></div>
+    <div class="card"><div class="kicker">self-supervised</div><h4>Use unlabelled images</h4><p>Start from DINOv3 or CLIP features, or pretrain with MAE / SimCLR on your own unlabelled domain images, then fine-tune.</p></div>
+    <div class="card"><div class="kicker">pseudo-labels</div><h4>Semi-supervised</h4><p>Train, predict on unlabelled data, keep high-confidence predictions as labels, retrain (Noisy Student, FixMatch).</p></div>
+    <div class="card"><div class="kicker">synthetic</div><h4>Generate data</h4><p>Copy-paste objects onto backgrounds, render 3D, or use diffusion. Use it for rare cases, and always validate on real data.</p></div>
+  </div>
+
+  <h2 id="aug">Step 3: augmentation</h2>
+  <div class="widget">
+    <div class="widget-title">Augmentation preview</div>
+    <div class="widget-sub">A synthetic "card-on-desk" photo. Click an augmentation, then hit <b>re-roll</b> to see a different random draw. Think about which ones would <i>break the label</i> for your task.</div>
+    <div class="seg" id="augseg"></div>
+    <div style="margin-top:10px"><button class="btn small" id="reroll">🎲 re-roll</button></div>
+    <div class="augwrap"><figure><canvas id="orig"></canvas><figcaption>original</figcaption></figure><figure><canvas id="augc"></canvas><figcaption id="augcap">augmented</figcaption></figure></div>
+    <div class="readout" id="augout" style="font-family:var(--sans)"></div>
+  </div>
+  <div class="table-wrap"><table>
+    <tr><th>Family</th><th>Examples</th><th>Good for</th><th>Breaks the label when…</th></tr>
+    <tr><td>Geometric</td><td>Random resized crop, flip, rotate, perspective, scale</td><td>Almost everything; crop+flip is the baseline</td><td>Flipping text, digits or left/right-sensitive labels (e.g. organ side); crops that cut out the object</td></tr>
+    <tr><td>Photometric</td><td>Brightness, contrast, saturation, hue, gamma, grayscale</td><td>Camera and lighting variation</td><td>Colour is the label (ripe vs unripe fruit, some medical stains)</td></tr>
+    <tr><td>Degradation</td><td>Blur, noise, JPEG compression, downscale</td><td>Phone photos, CCTV, scanned documents</td><td>Fine detail is the label (hairline cracks)</td></tr>
+    <tr><td>Occlusion</td><td>Cutout / Random Erasing, GridMask</td><td>Robustness to partial views</td><td>Erasing the only discriminative region on small objects</td></tr>
+    <tr><td>Mixing</td><td><b>MixUp</b> (blend two images and labels), <b>CutMix</b> (paste a patch, mix labels by area), <b>Mosaic</b> (4 images, detection)</td><td>Strong regularisation, calibration, small datasets</td><td>Tasks needing exact pixel content (OCR); use carefully for segmentation</td></tr>
+    <tr><td>Policies</td><td>RandAugment (N ops, magnitude M), TrivialAugment, AutoAugment</td><td>A strong default with only 1–2 knobs</td><td>Magnitude too high for small models or data</td></tr>
+  </table></div>
+  <div class="callout trap"><div class="tag">⚠️ Augmentation rules</div><p>Augment <b>training only</b>; validation and test get deterministic resize + normalise. For detection and segmentation, transform boxes and masks <b>with</b> the image. Stronger augmentation needs <b>longer training</b>. Scale augmentation strength with model size: big models benefit from heavy augmentation, tiny models can be hurt by it.</p></div>
+
+  <h2 id="recipe">Step 4: the modern fine-tuning recipe</h2>
+  <ol>
+    <li><b>Start from the best pretrained weights you can use</b> (licence!). Strong self-supervised or large-data pretraining beats a bigger architecture trained on less.</li>
+    <li><b>Two-phase fine-tuning</b>: train the new head with the backbone frozen (1–5 epochs, LR ~1e-3), then unfreeze and train everything with a low LR (1e-5 to 1e-4).</li>
+    <li><b>Discriminative LRs / layer-wise LR decay</b>: earlier layers get smaller LRs (e.g. ×0.65–0.75 per block for ViTs) because they hold general features.</li>
+    <li><b>AdamW + warm-up + cosine decay</b>; weight decay 0.05 for ViTs, ~1e-4 to 0.05 for CNNs.</li>
+    <li><b>Regularise</b>: label smoothing 0.1, MixUp/CutMix, drop-path (stochastic depth) 0.1–0.2, RandAugment.</li>
+    <li><b>EMA of weights</b>: keep a moving average of the weights (decay ~0.999–0.9999) and evaluate with it. A free +0.2–1%.</li>
+    <li><b>Resolution</b>: train at a lower resolution and fine-tune the last epochs at a higher one (progressive resizing / FixRes). Higher test resolution often helps.</li>
+    <li><b>Mixed precision (bf16/fp16), channels_last, <code>torch.compile</code></b>: 1.5–3× faster training means more experiments.</li>
+    <li><b>Batch norm with tiny batches</b>: freeze BN statistics, or use GroupNorm/LayerNorm, or accumulate gradients.</li>
+  </ol>
+
+  <h2 id="hp">Hyperparameter cheat sheet (image classification fine-tuning)</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Parameter</th><th>Starting value</th><th>Raise if…</th><th>Lower if…</th></tr>
+    <tr><td>Learning rate (full fine-tune)</td><td>CNN: 1e-4 to 5e-4 · ViT: 2e-5 to 1e-4 (AdamW)</td><td>Loss barely moves</td><td>Loss spikes, accuracy drops after unfreezing</td></tr>
+    <tr><td>Batch size</td><td>32–128 (grad accumulation if memory-limited)</td><td>GPU under-utilised</td><td>OOM; BN unstable → freeze BN instead</td></tr>
+    <tr><td>Epochs</td><td>10–50 fine-tune; 100–300 from scratch</td><td>Val still improving</td><td>Val peaks early → early stop</td></tr>
+    <tr><td>Weight decay</td><td>0.05 (ViT), 1e-4 to 0.05 (CNN)</td><td>Overfitting</td><td>Underfitting</td></tr>
+    <tr><td>Input resolution</td><td>224 (classification), 384–512 for fine detail</td><td>Small objects or details matter</td><td>Latency budget</td></tr>
+    <tr><td>Label smoothing</td><td>0.1</td><td>Over-confident, noisy labels</td><td>You need sharp probabilities, or very few classes</td></tr>
+    <tr><td>MixUp α / CutMix α</td><td>0.2 / 1.0 (switch prob 0.5)</td><td>Overfitting</td><td>Underfitting, short training</td></tr>
+    <tr><td>RandAugment (N, M)</td><td>N=2, M=9</td><td>Overfitting, big model</td><td>Small model, small data underfits</td></tr>
+    <tr><td>Drop-path</td><td>0.1 (small) to 0.3 (large models)</td><td>Overfitting with large models</td><td>Underfitting</td></tr>
+    <tr><td>Warm-up</td><td>1–5 epochs (or ~5% of steps)</td><td>Early loss spikes</td><td>—</td></tr>
+    <tr><td>EMA decay</td><td>0.9998 (scale with steps)</td><td>Long training</td><td>Very short training</td></tr>
+  </table></div>
+
+  <h2 id="backbone">Choosing a backbone by situation</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Situation</th><th>Backbone</th><th>Why</th></tr>
+    <tr><td>Few hundred to few thousand images, natural photos</td><td>ConvNeXt (V1/V2) -Tiny/Small, EfficientNetV2-S, or a frozen DINOv3 + linear head</td><td>CNNs fine-tune well in the low-data regime; DINOv3 features work frozen</td></tr>
+    <tr><td>Large labelled dataset, accuracy first</td><td>ViT / EVA-02 / DINOv3 ViT-L, fine-tuned</td><td>Transformers scale best with data and pretraining</td></tr>
+    <tr><td>Mobile / edge</td><td>MobileNetV3/V4, EfficientNet-Lite, YOLO-cls nano, distilled ConvNeXt</td><td>Depthwise convs, hardware-friendly ops</td></tr>
+    <tr><td>Zero-shot or labels change often</td><td>CLIP / SigLIP</td><td>Classify by text prompts; add a linear probe when labels exist</td></tr>
+    <tr><td>Image retrieval / dedup</td><td>DINOv3 or CLIP embeddings</td><td>Strong general-purpose embeddings</td></tr>
+    <tr><td>Medical / satellite / very different domain</td><td>Domain-pretrained weights if available, else ConvNeXt/ResNet + self-supervised pretraining on your data</td><td>ImageNet features transfer less well</td></tr>
+  </table></div>
+  <div class="callout interview"><div class="tag">🎯 Licence check</div><p>Pretrained weights carry licences. ConvNeXt V2's ImageNet weights are CC-BY-NC (non-commercial). Ultralytics YOLO is AGPL-3.0. DINOv3 has its own licence. In industry interviews, mentioning that you checked the licence before shipping is a maturity signal.</p></div>
+
+  <h2 id="infer">Step 5: inference-time gains</h2>
+  <ul>
+    <li><b>Test-time augmentation (TTA)</b>: average predictions over flips or multi-scale crops. +0.5–2%, costs N× compute.</li>
+    <li><b>Ensembles</b>: different seeds, architectures (CNN + ViT) or resolutions. Reliable gains; distil into one model for production.</li>
+    <li><b>Model soups</b>: average the <i>weights</i> of several fine-tuned runs from the same init. Ensemble-like gains at single-model cost.</li>
+    <li><b>Per-class thresholds and calibration</b>: tune on validation data for your business cost.</li>
+    <li><b>Reject option</b>: route low-confidence images to humans (common in KYC and insurance).</li>
+  </ul>
+
+  <h2 id="deploy">Step 6: making it fast and small</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Technique</th><th>Typical gain</th><th>Cost</th></tr>
+    <tr><td>Lower input resolution</td><td>Latency ~ quadratic in side length</td><td>Accuracy on fine details</td></tr>
+    <tr><td>FP16 / BF16</td><td>~2× on GPU</td><td>Usually none</td></tr>
+    <tr><td>INT8 quantisation (PTQ or QAT)</td><td>2–4× on CPU/edge, 4× smaller</td><td>Small drop; QAT recovers most</td></tr>
+    <tr><td>Knowledge distillation</td><td>Small student nearly matches a big teacher</td><td>Extra training</td></tr>
+    <tr><td>Structured pruning</td><td>Real speed-ups when channels are removed</td><td>Needs fine-tuning</td></tr>
+    <tr><td>TensorRT / ONNX Runtime / OpenVINO / CoreML</td><td>Kernel fusion, often 1.5–5×</td><td>Export pipeline maintenance</td></tr>
+  </table></div>
+
+  <h2 id="code">Code</h2>
+  <script type="text/plain" class="snippet" data-title="timm fine-tuning recipe with the modern tricks">
+    import timm, torch
+    from timm.data import create_transform, Mixup
+    from timm.loss import SoftTargetCrossEntropy
+    from timm.utils import ModelEmaV2
+
+    model = timm.create_model("convnext_tiny", pretrained=True, num_classes=N,
+                              drop_path_rate=0.1)
+    cfg = timm.data.resolve_data_config({}, model=model)
+    train_tf = create_transform(**cfg, is_training=True,
+                                auto_augment="rand-m9-mstd0.5",    # RandAugment
+                                re_prob=0.25)                       # random erasing
+    val_tf = create_transform(**cfg)                                # resize + center crop + normalise
+
+    mixup = Mixup(mixup_alpha=0.2, cutmix_alpha=1.0, label_smoothing=0.1, num_classes=N)
+    loss_fn = SoftTargetCrossEntropy()                              # mixed / smoothed targets
+    opt = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.05)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=3e-4, total_steps=EPOCHS*len(dl),
+                                                pct_start=0.05)    # warm-up then anneal
+    ema = ModelEmaV2(model, decay=0.9998)
+
+    for x, y in dl:
+        x, y = mixup(x, y)                     # needs an even batch size
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            loss = loss_fn(model(x), y)
+        opt.zero_grad(); loss.backward(); opt.step(); sched.step(); ema.update(model)
+    # evaluate ema.module, not model
+  </script>
+  <script type="text/plain" class="snippet" data-title="albumentations pipeline for detection (boxes move with the image)">
+    import albumentations as A
+
+    train_aug = A.Compose([
+        A.RandomResizedCrop(size=(640, 640), scale=(0.5, 1.0)),
+        A.HorizontalFlip(p=0.5),                  # skip if text/orientation matters
+        A.Perspective(scale=(0.02, 0.06), p=0.3),
+        A.ColorJitter(0.3, 0.3, 0.3, 0.05, p=0.6),
+        A.OneOf([A.MotionBlur(), A.GaussianBlur(), A.ImageCompression(quality_range=(40, 90))], p=0.4),
+        A.CoarseDropout(p=0.3),
+    ], bbox_params=A.BboxParams(format="pascal_voc", label_fields=["labels"], min_visibility=0.3))
+
+    out = train_aug(image=img, bboxes=boxes, labels=labels)
+  </script>
+  <script type="text/plain" class="snippet" data-title="Grad-CAM in a few lines (is the model looking at the right thing?)">
+    import torch, torch.nn.functional as F
+
+    feats, grads = {}, {}
+    layer = model.layer4                                  # last conv block (ResNet)
+    layer.register_forward_hook(lambda m, i, o: feats.__setitem__("a", o))
+    layer.register_full_backward_hook(lambda m, gi, go: grads.__setitem__("g", go[0]))
+
+    logits = model(x)                                     # x: (1, 3, H, W)
+    logits[0, logits.argmax()].backward()
+    w = grads["g"].mean(dim=(2, 3), keepdim=True)         # channel importance
+    cam = F.relu((w * feats["a"]).sum(1, keepdim=True))
+    cam = F.interpolate(cam, size=x.shape[-2:], mode="bilinear")
+    cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-9)   # overlay on the image
+  </script>
+  <script type="text/plain" class="snippet" data-title="test-time augmentation">
+    @torch.no_grad()
+    def predict_tta(model, x):
+        model.eval()
+        p = model(x).softmax(-1)
+        p += model(torch.flip(x, dims=[3])).softmax(-1)      # horizontal flip
+        return p / 2
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Your image classifier is at 82% and needs 90%. Walk me through it.</summary><div class="ans"><p>First, error analysis: confusion matrix, worst classes, view the misclassified images. Check for label noise and train/val leakage (near-duplicate images). Check bias vs variance. If variance: stronger augmentation (RandAugment, MixUp/CutMix), better pretrained backbone, regularisation, more or targeted data via active learning. If bias: bigger or better backbone, higher resolution, longer training, tuned LR. Then recipe tricks (EMA, label smoothing, layer-wise LR decay), and finally TTA and ensembling or distillation. Measure each change in isolation.</p></div></details>
+  <details class="qa"><summary>MixUp vs CutMix?</summary><div class="ans"><p>MixUp blends whole images pixel-wise, λ·x₁ + (1−λ)·x₂, with labels mixed by λ. It smooths decision boundaries and improves calibration, but images look unnatural. CutMix pastes a rectangular patch from one image into another, with labels mixed by area. It keeps local realism and forces the model to use multiple regions. Both regularise; they're often alternated randomly.</p></div></details>
+  <details class="qa"><summary>Why would horizontal flip hurt a model?</summary><div class="ans"><p>When orientation carries meaning: text and digits (OCR, cheques), left/right organs, traffic signs with arrows, chirality in chemistry. The augmentation must preserve the label.</p></div></details>
+  <details class="qa"><summary>Why freeze the backbone first, then unfreeze?</summary><div class="ans"><p>The new head starts random, so its large early gradients would flow back and damage pretrained features (catastrophic forgetting). Training the head first gives it sensible weights. Then unfreezing with a low LR, smaller still for early layers, adapts the features gently.</p></div></details>
+  <details class="qa"><summary>What is EMA of weights and why does it help?</summary><div class="ans"><p>Keep θ_ema ← d·θ_ema + (1−d)·θ after each step. It averages the weights over the end of training, landing in a flatter, more central region of the loss surface. That gives better generalisation and a more stable checkpoint at almost no cost.</p></div></details>
+  <details class="qa"><summary>How do you detect shortcut learning?</summary><div class="ans"><p>Grad-CAM or occlusion maps on correct predictions (is it looking at the object or the watermark?), test on slices where the shortcut is absent, and swap backgrounds. Classic example: a pneumonia model learned the hospital's scanner tokens.</p></div></details>
+  <details class="qa"><summary>Model works on validation but fails on customers' phone photos. Why and fix?</summary><div class="ans"><p>Domain shift: different cameras, blur, compression, lighting, framing. Collect a labelled sample of real production images for validation, augment to match (JPEG compression, blur, perspective, colour), fine-tune on in-domain data, add a quality gate (reject blurry or dark images with guidance to retake), and monitor input statistics.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const S=300;let seed=7;const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647;};
+  function scene(c,variant){const x=c.getContext('2d');
+    const g=x.createLinearGradient(0,0,0,S);g.addColorStop(0,variant?'#cfe8d8':'#d9cdb8');g.addColorStop(1,variant?'#6b9080':'#8a6f4e');x.fillStyle=g;x.fillRect(0,0,S,S);
+    for(let i=0;i<14;i++){x.strokeStyle='rgba(0,0,0,.06)';x.beginPath();x.moveTo(0,i*22);x.lineTo(S,i*22+10);x.stroke();}
+    x.save();x.translate(S/2,S/2+(variant?10:0));x.rotate(variant?.2:-.12);
+    const cg=x.createLinearGradient(-110,-70,110,70);cg.addColorStop(0,variant?'#e2554f':'#4338ca');cg.addColorStop(1,variant?'#f59e0b':'#0f766e');x.fillStyle=cg;
+    x.beginPath();x.roundRect?x.roundRect(-110,-68,220,136,14):x.rect(-110,-68,220,136);x.fill();
+    x.fillStyle='#f6d365';x.fillRect(-88,-30,34,26);x.fillStyle='#fff';x.font='bold 15px ui-monospace,monospace';x.fillText(variant?'SHOP 9911':'BANK 4821',-88,32);x.font='10px ui-sans-serif';x.fillText(variant?'GIFT CARD':'VALID 08/29',-88,50);x.font='bold 13px ui-sans-serif';x.fillText(variant?'★':'VISA',62,50);x.restore();}
+  const base=document.createElement('canvas');base.width=base.height=S;scene(base,0);
+  const base2=document.createElement('canvas');base2.width=base2.height=S;scene(base2,1);
+  const A={
+    'Random resized crop':[(x)=>{const sc=.45+rnd()*.45,w=S*Math.sqrt(sc),h=w*(0.8+rnd()*.4),sx=rnd()*(S-w),sy=rnd()*Math.max(1,S-h);x.drawImage(base,sx,sy,w,Math.min(h,S),0,0,S,S);},'The classification baseline. Safe unless the crop can cut the object out entirely (use scale ≥ 0.3–0.5).'],
+    'Horizontal flip':[(x)=>{x.translate(S,0);x.scale(-1,1);x.drawImage(base,0,0);},'⚠️ Look at the text: it is now mirrored. Fine for cats and cars, wrong for OCR, cheques and digits.'],
+    'Rotate ±25°':[(x)=>{x.fillStyle='#000';x.fillRect(0,0,S,S);x.translate(S/2,S/2);x.rotate((rnd()-.5)*0.9);x.drawImage(base,-S/2,-S/2);},'Robustness to camera tilt. Watch the black corners; reflect-padding or cropping hides them.'],
+    'Perspective':[(x)=>{const k=.12+rnd()*.12;x.setTransform(1,(rnd()-.5)*k,(rnd()-.5)*k,1,(rnd()-.5)*30,(rnd()-.5)*30);x.drawImage(base,0,0);},'Mimics photographing a document or card at an angle. Very useful for KYC uploads.'],
+    'Colour jitter':[(x)=>{x.filter=`brightness(${.6+rnd()*.8}) contrast(${.6+rnd()*.8}) saturate(${.3+rnd()*1.4}) hue-rotate(${Math.round((rnd()-.5)*60)}deg)`;x.drawImage(base,0,0);},'Lighting and camera differences. ⚠️ Skip hue shifts when colour is the label.'],
+    'Blur + JPEG-ish':[(x)=>{x.filter=`blur(${1+rnd()*2.5}px)`;x.drawImage(base,0,0);x.filter='none';const t=document.createElement('canvas');t.width=t.height=S/4;t.getContext('2d').drawImage(x.canvas,0,0,S/4,S/4);x.imageSmoothingEnabled=false;x.drawImage(t,0,0,S,S);},'Simulates cheap cameras, motion and compression. This closes the gap between clean training images and real uploads.'],
+    'Cutout / erasing':[(x)=>{x.drawImage(base,0,0);for(let i=0;i<2;i++){const w=40+rnd()*60;x.fillStyle=`rgb(${rnd()*255|0},${rnd()*255|0},${rnd()*255|0})`;x.fillRect(rnd()*(S-w),rnd()*(S-w),w,w*(.6+rnd()*.6));}},'Forces the model to use several cues, not one patch. Keep boxes smaller than the key object.'],
+    'MixUp':[(x)=>{const l=.55+rnd()*.3;x.globalAlpha=1;x.drawImage(base,0,0);x.globalAlpha=1-l;x.drawImage(base2,0,0);x.globalAlpha=1;$('augcap').textContent=`label = ${l.toFixed(2)}·bank card + ${(1-l).toFixed(2)}·gift card`;},'Blends images and labels. Ghostly to humans, but a strong regulariser that also improves calibration.'],
+    'CutMix':[(x)=>{x.drawImage(base,0,0);const w=90+rnd()*80,h=90+rnd()*60,sx=rnd()*(S-w),sy=rnd()*(S-h);x.drawImage(base2,sx,sy,w,h,sx,sy,w,h);const a=w*h/(S*S);$('augcap').textContent=`label = ${(1-a).toFixed(2)}·bank card + ${a.toFixed(2)}·gift card`;},'Pastes a patch from another image; the label is mixed by area. Keeps local realism.'],
+    'Mosaic (detection)':[(x)=>{const cx=S*(.35+rnd()*.3),cy=S*(.35+rnd()*.3);x.drawImage(base,0,0,S,S,0,0,cx,cy);x.drawImage(base2,0,0,S,S,cx,0,S-cx,cy);x.drawImage(base2,0,0,S,S,0,cy,cx,S-cy);x.drawImage(base,0,0,S,S,cx,cy,S-cx,S-cy);},'Four images in one: more objects per batch, varied scales and contexts. A YOLO staple; switch it off for the final epochs.'],
+  };
+  let cur='Random resized crop';
+  Object.keys(A).forEach(k=>{const b=document.createElement('button');b.textContent=k;b.onclick=()=>{cur=k;draw();};$('augseg').appendChild(b);});
+  function fit(c){const w=Math.min(c.parentElement.clientWidth||300,360);c.width=S;c.height=S;c.style.width=w+'px';c.style.height=w+'px';}
+  function draw(){
+    [...$('augseg').children].forEach(b=>b.classList.toggle('on',b.textContent===cur));
+    const o=$('orig'),a=$("augc");fit(o);fit(a);o.getContext('2d').drawImage(base,0,0);
+    const x=a.getContext('2d');x.setTransform(1,0,0,1,0,0);x.filter='none';x.globalAlpha=1;x.imageSmoothingEnabled=true;x.clearRect(0,0,S,S);$('augcap').textContent='augmented';
+    x.save();A[cur][0](x);x.restore();$('augout').textContent=A[cur][1];
+  }
+  $('reroll').onclick=draw;draw();window.addEventListener('resize',draw);
+})();
+</script>
+</body>
+</html>

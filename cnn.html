@@ -64,16 +64,25 @@
     <li><b>Receptive field</b>: the input region a neuron "sees". It grows with depth, stride and dilation. Two stacked 3×3 convs see 5×5 with fewer parameters than one 5×5 (that's VGG's insight).</li>
   </ul>
 
-  <h2 id="arch">Architectures: the story in six steps</h2>
+  <h2 id="arch">Architectures: the story, and what each one taught us</h2>
   <div class="table-wrap"><table>
-    <tr><th>Model</th><th>Year</th><th>Key idea to remember</th></tr>
-    <tr><td>LeNet-5</td><td>1998</td><td>Conv → pool → dense. Read cheque digits for banks.</td></tr>
-    <tr><td>AlexNet</td><td>2012</td><td>ReLU, dropout and GPUs. Started the deep learning boom on ImageNet.</td></tr>
-    <tr><td>VGG</td><td>2014</td><td>Only stacked 3×3 convs. Deep and simple.</td></tr>
-    <tr><td><b>ResNet</b></td><td>2015</td><td><b>Skip connections</b>: y = F(x) + x. Made 100+ layer nets trainable.</td></tr>
-    <tr><td>EfficientNet / MobileNet</td><td>2017–19</td><td>Depthwise-separable convs and compound scaling. Fast on mobile.</td></tr>
-    <tr><td>ViT / ConvNeXt</td><td>2020–22</td><td>ViT: image patches as tokens in a transformer, needs lots of data. ConvNeXt: a CNN modernised with transformer design tricks.</td></tr>
+    <tr><th>Model</th><th>Year</th><th>Key idea</th><th>Still useful for</th></tr>
+    <tr><td>LeNet-5</td><td>1998</td><td>Conv → pool → dense; read cheque digits for banks</td><td>History / interviews</td></tr>
+    <tr><td>AlexNet</td><td>2012</td><td>ReLU, dropout, GPU training, data augmentation. Started the deep learning boom on ImageNet.</td><td>History</td></tr>
+    <tr><td>VGG-16/19</td><td>2014</td><td>Only stacked 3×3 convs; depth matters. ~138M parameters, mostly in the dense layers.</td><td>Perceptual-loss features, teaching</td></tr>
+    <tr><td>GoogLeNet / Inception</td><td>2014</td><td>Parallel 1×1, 3×3, 5×5 branches per block; 1×1 bottlenecks cut compute; global average pooling</td><td>Multi-scale idea reused everywhere</td></tr>
+    <tr><td><b>ResNet</b></td><td>2015</td><td><b>Skip connections</b>: y = F(x) + x. Made 50–150+ layers trainable. Bottleneck blocks 1×1 → 3×3 → 1×1.</td><td>The default baseline; detection/segmentation backbones</td></tr>
+    <tr><td>DenseNet</td><td>2016</td><td>Each layer receives all previous feature maps (concatenation); strong feature reuse, few parameters</td><td>Medical imaging, small data</td></tr>
+    <tr><td>MobileNet V1→V4</td><td>2017–24</td><td><b>Depthwise-separable convs</b> (≈8–9× fewer FLOPs than a 3×3 conv), inverted residuals, hardware-aware search</td><td>Mobile / edge, on-device KYC checks</td></tr>
+    <tr><td>EfficientNet / V2</td><td>2019 / 2021</td><td><b>Compound scaling</b> of depth, width and resolution together; V2 adds Fused-MBConv and progressive resizing for faster training</td><td>Accuracy per FLOP, solid fine-tuning</td></tr>
+    <tr><td>RegNet</td><td>2020</td><td>Design-space search for simple, regular, fast networks</td><td>Production backbones</td></tr>
+    <tr><td>ViT / DeiT</td><td>2020–21</td><td>Image → 16×16 patches → transformer. Needs big data or distillation (DeiT) because it has weak spatial priors</td><td>Large-data fine-tuning, multimodal</td></tr>
+    <tr><td>Swin</td><td>2021</td><td>Attention inside shifted local windows, hierarchical feature maps, cost linear in image size</td><td>Dense tasks at high resolution</td></tr>
+    <tr><td><b>ConvNeXt / V2</b></td><td>2022 / 2023</td><td>A ResNet modernised with transformer-era choices: 7×7 depthwise conv, LayerNorm, GELU, inverted bottleneck. V2 adds masked-autoencoder pretraining and GRN.</td><td>Best general CNN for fine-tuning on small-to-mid data (check the V2 weight licence)</td></tr>
+    <tr><td>CLIP / SigLIP</td><td>2021 / 2023</td><td>Image and text encoders trained to match captions</td><td>Zero-shot classification, search</td></tr>
+    <tr><td><b>DINOv2 / DINOv3</b>, EVA-02</td><td>2023–25</td><td>Self-supervised (DINO) or MIM-on-CLIP (EVA) pretraining at huge scale; features work frozen</td><td>Frozen backbone + light head; highest accuracy work</td></tr>
   </table></div>
+  <div class="callout math"><div class="tag">📐 Why depthwise-separable convs are cheap</div><p>A standard K×K conv costs K²·C<sub>in</sub>·C<sub>out</sub> per pixel. Depthwise (one K×K filter per input channel) + pointwise (1×1 to mix channels) costs K²·C<sub>in</sub> + C<sub>in</sub>·C<sub>out</sub>. With K=3 and C<sub>out</sub>=256, that's about 8–9× fewer multiply-adds. It's the core trick of MobileNet, EfficientNet and ConvNeXt.</p></div>
   <div class="callout layman"><div class="tag">🧒 Why ResNet's skip connection works</div><p>Instead of asking each block to learn the whole transformation, the block only learns the <i>correction</i> F(x) to add to its input. If a layer isn't useful it can learn F(x)=0 and pass x through unchanged. The "+x" path also gives gradients a highway straight back to the early layers, so they don't vanish.</p></div>
 
   <h2 id="tl">Transfer learning: the thing you'll actually do at work</h2>
@@ -88,9 +97,10 @@
   <div class="callout trap"><div class="tag">⚠️ Fine-tuning traps</div><p>Use a <b>lower LR for the backbone</b> (e.g. 1e-5) than for the new head (1e-3), or you'll wreck the pretrained features ("catastrophic forgetting"). Use the <b>same normalisation</b> (ImageNet mean/std) the model was pretrained with.</p></div>
 
   <h2 id="tasks">Beyond classification</h2>
+  <div class="callout win"><div class="tag">✅ Go deeper</div><p>Detection, segmentation, OCR, tracking, IoU/NMS/mAP and foundation models (SAM 3, DINOv3) are covered on <a href="cv-detection.html">CV II: Detection &amp; segmentation</a>. How to push accuracy (augmentation, recipes, hyperparameters, debugging) is on <a href="cv-performance.html">CV III: Vision performance playbook</a>. Every model's parameters are in the <a href="models.html#vision">Model encyclopedia</a>.</p></div>
   <div class="grid">
-    <div class="card"><div class="kicker">classification</div><h4>What is it?</h4><p>ResNet, EfficientNet, ViT. Product category, document type.</p></div>
-    <div class="card"><div class="kicker">detection</div><h4>What and where?</h4><p>YOLO (one-stage, real-time) vs Faster R-CNN (two-stage, accurate). Metric: mAP at an IoU threshold.</p></div>
+    <div class="card"><div class="kicker">classification</div><h4>What is it?</h4><p>ConvNeXt, EfficientNetV2, ViT, DINOv3. Product category, document type.</p></div>
+    <div class="card"><div class="kicker">detection</div><h4>What and where?</h4><p>YOLO11/YOLO26 and RT-DETR/RF-DETR (real-time) vs Faster R-CNN (two-stage). Metric: mAP at an IoU threshold.</p></div>
     <div class="card"><div class="kicker">segmentation</div><h4>Which pixels?</h4><p>U-Net (encoder-decoder with skip connections), Mask R-CNN. Medical scans, car-damage area for insurance.</p></div>
     <div class="card"><div class="kicker">OCR / documents</div><h4>Read it</h4><p>Detection + CRNN/transformer recognisers; LayoutLM or Donut for forms, invoices and KYC.</p></div>
     <div class="card"><div class="kicker">similarity</div><h4>Find similar</h4><p>Siamese nets / CLIP embeddings for visual search ("shop the look") and face match in e-KYC.</p></div>

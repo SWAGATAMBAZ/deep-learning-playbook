@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Model encyclopedia · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script><script src="assets/models-data.js"></script>
+<style>
+.mfilters{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0}
+.mfilters button{border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:99px;padding:5px 12px;font:inherit;font-size:13.5px;cursor:pointer}
+.mfilters button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.mfilters button span{opacity:.7;font-size:12px;margin-left:4px}
+.mgrid{display:grid;gap:14px}
+details.model{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:0 18px;box-shadow:var(--shadow)}
+details.model[open]{border-color:var(--accent)}
+details.model summary{list-style:none;cursor:pointer;padding:14px 0;display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:baseline}
+details.model summary::-webkit-details-marker{display:none}
+details.model summary h4{margin:0;font-size:17px}
+details.model summary .yr{font-family:var(--mono);font-size:12px;color:var(--muted)}
+details.model summary p{grid-column:1/-1;margin:0;color:var(--muted);font-size:14.5px}
+.mbody{display:grid;grid-template-columns:1fr 1fr;gap:6px 22px;padding:4px 0 16px}
+.mbody h5{margin:10px 0 4px;font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.mbody ul{margin:0;padding-left:18px;font-size:14.5px}
+.mbody p{margin:0;font-size:14.5px}
+.mbody .full{grid-column:1/-1}
+.h-p{color:var(--accent)}.h-up{color:var(--green)}.h-use{color:var(--teal)}.h-av{color:var(--coral)}.h-q{color:var(--amber)}
+@media(max-width:760px){.mbody{grid-template-columns:1fr}}
+input.search{font:inherit;font-size:15px;padding:9px 13px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);width:100%;max-width:440px}
+</style>
+</head>
+<body data-page="models">
+<main>
+  <div class="eyebrow">Reference · keep this open while you study</div>
+  <h1>Model encyclopedia</h1>
+  <p class="lede">Every important deep learning model on one page. Each card covers <b>the intuition</b>, <b>the key parameters with sensible starting values</b>, <b>how to improve it</b>, <b>when to use or avoid it</b> and <b>the interview point</b>. Filter by family or search by name or parameter.</p>
+  <input class="search" id="q" placeholder="Search e.g. dropout, YOLO, focal, lookback, LoRA rank…">
+  <div class="mfilters" id="cats"></div>
+  <div class="row" style="display:flex;gap:8px;margin-bottom:12px"><button class="btn small" id="openAll">Expand all</button><button class="btn small" id="closeAll">Collapse all</button><span id="count" style="color:var(--muted);font-size:13px;align-self:center"></span></div>
+  <div class="mgrid" id="grid"></div>
+
+  <h2>Universal tuning order (works for almost every model)</h2>
+  <div class="callout win"><div class="tag">✅ When a card says "tune", tune in this order</div>
+  <ol>
+    <li><b>Data and labels</b>: fix leakage, label noise, and the validation split (time-based or group-based).</li>
+    <li><b>Learning rate</b> (log-scale search) and <b>schedule</b> (warm-up + cosine).</li>
+    <li><b>Capacity</b>: model size, depth, width, input resolution or sequence length.</li>
+    <li><b>Regularisation</b>: weight decay, dropout/drop-path, augmentation, early stopping.</li>
+    <li><b>Loss</b> matched to the business cost (weighted, focal, quantile, ranking).</li>
+    <li><b>Inference</b>: threshold, calibration, TTA, ensembling, then distillation for speed.</li>
+  </ol></div>
+</main>
+<script>
+(function(){
+  const M=window.DLP_MODELS,C=window.DLP_MODEL_CATS;const $=id=>document.getElementById(id);
+  let cat=(location.hash||'#all').slice(1);if(!C.some(c=>c[0]===cat))cat='all';
+  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  C.forEach(([id,label])=>{const b=document.createElement('button');b.dataset.id=id;const n=id==='all'?M.length:M.filter(m=>m.c===id).length;b.innerHTML=`${label}<span>${n}</span>`;b.onclick=()=>{cat=id;try{history.replaceState(null,'','#'+id);}catch(e){location.hash=id;}render();};$('cats').appendChild(b);});
+  const catName=id=>(C.find(c=>c[0]===id)||[,''])[1];
+  function card(m){
+    return `<details class="model"><summary><h4>${esc(m.n)}</h4><span class="yr">${esc(m.y)} · ${catName(m.c)}</span><p>${esc(m.i)}</p></summary>
+    <div class="mbody">
+      <div><h5 class="h-p">Key parameters (starting values)</h5><ul>${m.p.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>
+      <div><h5 class="h-up">How to improve performance</h5><ul>${m.up.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>
+      <div><h5 class="h-use">Use when</h5><p>${esc(m.use)}</p></div>
+      <div><h5 class="h-av">Avoid when</h5><p>${esc(m.avoid)}</p></div>
+      <div class="full"><h5 class="h-q">🎯 Interview point</h5><p>${esc(m.q)}</p></div>
+      ${m.l?`<div class="full"><a href="${m.l}">→ Go to the lesson</a></div>`:''}
+    </div></details>`;
+  }
+  function render(){
+    [...$('cats').children].forEach(b=>b.classList.toggle('on',b.dataset.id===cat));
+    const q=$('q').value.toLowerCase().trim();
+    const list=M.filter(m=>(cat==='all'||m.c===cat)&&(!q||JSON.stringify(m).toLowerCase().includes(q)));
+    $('grid').innerHTML=list.map(card).join('')||'<p style="color:var(--muted)">No models match.</p>';
+    $('count').textContent=`${list.length} model${list.length===1?'':'s'}`;
+    if(q&&list.length<=3)$('grid').querySelectorAll('details').forEach(d=>d.open=true);
+  }
+  $('q').addEventListener('input',render);
+  $('openAll').onclick=()=>$('grid').querySelectorAll('details').forEach(d=>d.open=true);
+  $('closeAll').onclick=()=>$('grid').querySelectorAll('details').forEach(d=>d.open=false);
+  window.addEventListener('hashchange',()=>{const h=location.hash.slice(1);if(C.some(c=>c[0]===h)){cat=h;render();}});
+  render();
+})();
+</script>
+</body>
+</html>

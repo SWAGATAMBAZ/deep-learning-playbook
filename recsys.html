@@ -11,6 +11,7 @@
   <div class="eyebrow">Lesson 08 · Week 6 · E-commerce, fintech cross-sell, content</div>
   <h1>Recommender systems</h1>
   <p class="lede">"Customers also bought", "Recommended credit card for you", the home feed. Every large e-commerce or fintech DS interview has a recsys question, usually framed as a <b>system design</b> problem.</p>
+  <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Parameters &amp; tuning per model</div><p>Every model on this page has a card in the <a href="models.html#recsys">Model encyclopedia</a> with its key parameters, starting values, how to improve it and when to avoid it.</p></div>
   <div class="toc"><a href="#funnel">The funnel</a><a href="#cf">Collaborative filtering</a><a href="#tt">Two-tower</a><a href="#rank">Ranking models</a><a href="#seq">Sequential</a><a href="#metrics">Metrics</a><a href="#issues">Cold start &amp; bias</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
 
   <h2 id="funnel">The industry funnel (draw this first in any design round)</h2>
@@ -35,7 +36,7 @@
       <div class="control"><label>fashion affinity <b id="u1v"></b></label><input type="range" id="u1" min="-1" max="1" step="0.05" value="0.1"></div>
       <div class="control"><label>premium vs budget <b id="u2v"></b></label><input type="range" id="u2" min="-1" max="1" step="0.05" value="-0.5"></div>
     </div>
-    <div class="rank" id="rank"></div>
+    <div class="rank" id="rankList"></div>
   </div>
   <ul>
     <li><b>User tower</b>: user ID embedding + recent-history embeddings (pooled or GRU/transformer) + context (time, device, location).</li>
@@ -118,7 +119,7 @@
     const u=[+$('u0').value,+$('u1').value,+$('u2').value];['u0','u1','u2'].forEach((id,i)=>$(id+'v').textContent=u[i].toFixed(2));
     const s=items.map(([n,v])=>[n,v.reduce((a,x,i)=>a+x*u[i],0)]).sort((a,b)=>b[1]-a[1]);
     const mx=Math.max(...s.map(x=>Math.abs(x[1])))||1;
-    $('rank').innerHTML=s.map(([n,v],i)=>`<div><span style="width:22px;font-family:var(--mono);color:var(--muted)">${i+1}</span><span style="width:190px">${n}</span><span class="bar" style="width:${Math.max(2,(v+mx)/(2*mx)*260)}px;opacity:${i<3?1:.45}"></span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">${v.toFixed(2)}</span></div>`).join('');
+    $('rankList').innerHTML=s.map(([n,v],i)=>`<div><span style="width:22px;font-family:var(--mono);color:var(--muted)">${i+1}</span><span style="width:190px">${n}</span><span class="bar" style="width:${Math.max(2,(v+mx)/(2*mx)*260)}px;opacity:${i<3?1:.45}"></span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">${v.toFixed(2)}</span></div>`).join('');
   }
   ['u0','u1','u2'].forEach(id=>$(id).addEventListener('input',draw));draw();
 })();

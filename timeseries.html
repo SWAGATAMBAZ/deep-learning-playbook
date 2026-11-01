@@ -10,6 +10,7 @@
   <div class="eyebrow">Lesson 09 · Week 6 · Demand, cash flow, call volume</div>
   <h1>Time-series forecasting with deep learning</h1>
   <p class="lede">Forecasting ATM cash, product demand across 50,000 SKUs, call-centre load or a customer's next-month spend. Deep learning shines when you have <b>many related series</b> and rich covariates, and you train one <i>global</i> model across all of them.</p>
+  <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Parameters &amp; tuning per model</div><p>Every model on this page has a card in the <a href="models.html#timeseries">Model encyclopedia</a> with its key parameters, starting values, how to improve it and when to avoid it.</p></div>
   <div class="toc"><a href="#when">When DL helps</a><a href="#frame">Framing</a><a href="#models">Models</a><a href="#cv">Validation</a><a href="#metrics">Metrics</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
 
   <h2 id="when">Classical vs deep learning</h2>
@@ -19,7 +20,7 @@
     <tr><td>Thousands of related series (SKUs × stores, ATMs, branches)</td><td><b>Global</b> model: LightGBM on lag features, or DeepAR / TFT / N-HiTS</td></tr>
     <tr><td>Rich known-future covariates (promos, holidays, price)</td><td>TFT, LightGBM, DeepAR</td></tr>
     <tr><td>Need probabilistic forecasts (inventory, cash buffers)</td><td>DeepAR, TFT with quantile loss</td></tr>
-    <tr><td>No time to build, need decent zero-shot quality</td><td>Time-series foundation models (Chronos, TimesFM, Moirai)</td></tr>
+    <tr><td>No time to build, need decent zero-shot quality</td><td>Time-series foundation models (Chronos-2, TimesFM 2.5, Moirai)</td></tr>
   </table></div>
   <div class="callout interview"><div class="tag">🎯 Interview point</div><p>In the M5 forecasting competition (Walmart sales), gradient-boosted trees on lag and calendar features dominated the leaderboard. Say this to show judgement: <b>start with seasonal-naive and LightGBM baselines; reach for DL when you have scale, covariates or need distributions.</b></p></div>
 
@@ -39,7 +40,7 @@
     <div class="card"><div class="kicker">MLP</div><h4>N-BEATS / N-HiTS</h4><p>Stacks of MLP blocks that each forecast and subtract their fit from the input (backcast). Simple, fast and strong. N-BEATS can decompose into trend and seasonality.</p></div>
     <div class="card"><div class="kicker">Google</div><h4>Temporal Fusion Transformer</h4><p>Variable-selection networks + LSTM + attention + quantile outputs. Handles static, known-future and observed covariates, with interpretable feature weights. Popular in industry.</p></div>
     <div class="card"><div class="kicker">Transformer</div><h4>PatchTST</h4><p>Chops a series into patches (like ViT) and models each channel independently. Strong on long horizons.</p></div>
-    <div class="card"><div class="kicker">Foundation</div><h4>Chronos / TimesFM / Moirai</h4><p>Pre-trained on huge collections of series and forecast <b>zero-shot</b>. A great quick baseline; fine-tune if needed.</p></div>
+    <div class="card"><div class="kicker">Foundation</div><h4>Chronos-2 / TimesFM 2.5 / Moirai 2</h4><p>Pre-trained on huge collections of series and forecast <b>zero-shot</b>. Chronos-2 (Amazon, Oct 2025) natively handles multivariate series and covariates; TimesFM 2.5 (Google) has a 16k context. The leader changes by dataset, so always backtest on your own series against a classical baseline.</p></div>
   </div>
 
   <h2 id="cv">Validation: never shuffle time</h2>
@@ -99,7 +100,8 @@
             losses.append(torch.max(q * e, (q - 1) * e))
         return torch.mean(torch.stack(losses))
 
-    # Zero-shot baseline with a pretrained time-series model (pip install chronos-forecasting)
+    # Zero-shot baseline with the original Chronos (pip install chronos-forecasting).
+    # For covariates / multivariate series use Chronos-2 from the same package (see its README).
     from chronos import ChronosPipeline
     pipe = ChronosPipeline.from_pretrained("amazon/chronos-t5-small")
     samples = pipe.predict(torch.tensor(history), prediction_length=14)   # (1, n_samples, 14)

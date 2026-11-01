@@ -6,6 +6,8 @@
     { id: "training", file: "training.html", title: "Training & improving models", group: "Core" },
     { id: "tabular", file: "tabular.html", title: "Deep learning on tabular data", group: "Architectures" },
     { id: "cnn", file: "cnn.html", title: "CNNs & computer vision", group: "Architectures" },
+    { id: "cv-detection", file: "cv-detection.html", title: "CV II: Detection & segmentation", group: "Architectures" },
+    { id: "cv-performance", file: "cv-performance.html", title: "CV III: Vision performance playbook", group: "Architectures" },
     { id: "rnn", file: "rnn.html", title: "RNN, LSTM, GRU", group: "Architectures" },
     { id: "transformers", file: "transformers.html", title: "Attention & Transformers", group: "Architectures" },
     { id: "nlp", file: "nlp.html", title: "Embeddings & NLP", group: "Architectures" },
@@ -15,6 +17,7 @@
     { id: "genai", file: "genai.html", title: "Generative AI & LLMs", group: "Applied" },
     { id: "industry", file: "industry.html", title: "Industry playbook", group: "Decide" },
     { id: "chooser", file: "chooser.html", title: "Which model when?", group: "Decide" },
+    { id: "models", file: "models.html", title: "Model encyclopedia (62 models)", group: "Decide" },
     { id: "production", file: "production.html", title: "Production & explainability", group: "Decide" },
     { id: "interview", file: "interview.html", title: "Interview question bank", group: "Interview" },
   ];
