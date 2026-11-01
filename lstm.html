@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sequences II · LSTM in depth · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script><script src="assets/seq.js"></script>
+<style>.gtab td,.gtab th{font-family:var(--mono);font-size:12.5px;padding:6px 9px;text-align:right}.gtab td:first-child,.gtab th:first-child{text-align:left}</style>
+</head>
+<body data-page="lstm">
+<main>
+  <div class="eyebrow">Sequences II · Week 4 · Long Short-Term Memory</div>
+  <h1>LSTM in depth</h1>
+  <p class="lede">The LSTM (Hochreiter &amp; Schmidhuber, 1997) fixed the vanilla RNN's amnesia by adding a separate <b>cell state</b> and three learnable <b>gates</b> that decide what to forget, what to write and what to reveal. It was the default sequence model for two decades and still powers many streaming and on-device systems.</p>
+  <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Three-part series</div><p><a href="rnn.html">I. RNN</a> (read first: BPTT, vanishing gradients, shapes) → <b>II. LSTM</b> (this page) → <a href="gru.html">III. GRU</a> (lighter alternative + LSTM vs GRU).</p></div>
+  <div class="toc"><a href="#problem">The problem it solves</a><a href="#intuition">Intuition</a><a href="#gates">The gates</a><a href="#sim">Cell simulator</a><a href="#why">Why gradients survive</a><a href="#params">Parameters</a><a href="#torch">PyTorch API</a><a href="#variants">Variants</a><a href="#hp">Hyperparameters</a><a href="#improve">Improving performance</a><a href="#bugs">Common bugs</a><a href="#industry">Industry uses</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="problem">The problem LSTM solves</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>"The customer, who opened her account in <b>Pune</b> in 2019 and has since made hundreds of small UPI payments, salary credits and bill payments, just made a card purchase in São Paulo." To flag this you must remember <b>Pune</b> across hundreds of steps of irrelevant activity. A vanilla RNN overwrites its memory at every step, so after ~10–20 steps the early information (and its gradient) is gone. The LSTM adds a protected memory lane that keeps information until the model decides to drop it.</p></div>
+
+  <h2 id="intuition">Intuition: a conveyor belt with three valves</h2>
+  <div class="grid two">
+    <div class="card"><div class="kicker">memory lane</div><h4>Cell state c<sub>t</sub></h4><p>A conveyor belt running through time. Information rides along mostly unchanged; it's only <b>scaled</b> (forgotten) and <b>added to</b> (written). This is long-term memory.</p></div>
+    <div class="card"><div class="kicker">working memory</div><h4>Hidden state h<sub>t</sub></h4><p>A filtered read-out of the belt that is passed to the next step and to the output layer. This is short-term, "what's relevant right now".</p></div>
+    <div class="card"><div class="kicker">valve 1</div><h4>Forget gate f<sub>t</sub></h4><p>"What should I erase from the belt?" 1 = keep everything, 0 = wipe. E.g. the customer changed city, so drop the old city.</p></div>
+    <div class="card"><div class="kicker">valve 2</div><h4>Input gate i<sub>t</sub> + candidate g<sub>t</sub></h4><p>"Is this step worth writing down, and what exactly?" g proposes new content; i decides how much of it to add.</p></div>
+    <div class="card"><div class="kicker">valve 3</div><h4>Output gate o<sub>t</sub></h4><p>"Which part of memory matters for the current decision?" Controls what the belt reveals as h<sub>t</sub>.</p></div>
+    <div class="card"><div class="kicker">key idea</div><h4>Add, don't overwrite</h4><p>A vanilla RNN replaces its state each step. An LSTM <b>adds</b> to its cell state. Addition passes gradients through unchanged, multiplication shrinks them.</p></div>
+  </div>
+
+  <h2 id="gates">The equations, gate by gate</h2>
+  <div class="callout math"><div class="tag">📐 One LSTM step (σ = sigmoid → 0..1 valves, tanh → −1..1 content)</div>
+    <p style="font-family:var(--serif);font-size:17.5px;line-height:2.05">
+    f<sub>t</sub> = σ(W<sub>f</sub> x<sub>t</sub> + U<sub>f</sub> h<sub>t−1</sub> + b<sub>f</sub>)<br>
+    i<sub>t</sub> = σ(W<sub>i</sub> x<sub>t</sub> + U<sub>i</sub> h<sub>t−1</sub> + b<sub>i</sub>)<br>
+    g<sub>t</sub> = tanh(W<sub>g</sub> x<sub>t</sub> + U<sub>g</sub> h<sub>t−1</sub> + b<sub>g</sub>) &nbsp; <span style="font-size:14px;color:var(--muted)">(often written c̃<sub>t</sub>)</span><br>
+    o<sub>t</sub> = σ(W<sub>o</sub> x<sub>t</sub> + U<sub>o</sub> h<sub>t−1</sub> + b<sub>o</sub>)<br>
+    <b>c<sub>t</sub> = f<sub>t</sub> ⊙ c<sub>t−1</sub> + i<sub>t</sub> ⊙ g<sub>t</sub></b><br>
+    <b>h<sub>t</sub> = o<sub>t</sub> ⊙ tanh(c<sub>t</sub>)</b></p>
+    <p>⊙ = element-wise product. All four "gates" read the same inputs [x<sub>t</sub>, h<sub>t−1</sub>], so in code they are computed as <b>one</b> big matrix multiply and split into four chunks. PyTorch's order is <b>i, f, g, o</b>.</p>
+  </div>
+  <div class="table-wrap"><table>
+    <tr><th>Piece</th><th>Activation · range</th><th>Question it answers</th><th>Fraud-sequence example</th></tr>
+    <tr><td>Forget f</td><td>sigmoid · 0–1</td><td>How much of the old memory to keep?</td><td>Keep "usual city", drop yesterday's one-off merchant</td></tr>
+    <tr><td>Input i</td><td>sigmoid · 0–1</td><td>Is this step worth recording?</td><td>A first-ever international transaction: write it</td></tr>
+    <tr><td>Candidate g</td><td>tanh · −1–1</td><td>What would we record?</td><td>"Foreign, high amount, new device"</td></tr>
+    <tr><td>Output o</td><td>sigmoid · 0–1</td><td>What part of memory is relevant now?</td><td>Expose the location memory when scoring a card-present purchase</td></tr>
+    <tr><td>Cell c</td><td>unbounded (in practice moderate)</td><td>Long-term store</td><td>Customer's behavioural profile</td></tr>
+    <tr><td>Hidden h</td><td>−1–1</td><td>Short-term output</td><td>Input to the fraud score head</td></tr>
+  </table></div>
+
+  <h2 id="sim">LSTM cell simulator</h2>
+  <div class="widget">
+    <div class="widget-title">Remember the signal at t1 through 20 steps of noise</div>
+    <div class="widget-sub">A one-unit LSTM: the token at t1 is a "write" signal; later steps are distracting noise. Gate pre-activations = bias + learned response to the token. Compare with a vanilla RNN reading the same inputs. Try: forget bias 4 (remembers), forget bias 0 (forgets), input bias −1 (noise leaks into memory), and the "reset" pattern (the forget gate deliberately closes at t12).</div>
+    <div class="controls">
+      <div class="control"><label>pattern</label><select id="lpat"><option value="pos">+1 signal, then noise</option><option value="neg">−1 signal, then noise</option><option value="reset">signal, noise, RESET token at t12</option></select></div>
+      <div class="control"><label><span>forget-gate bias b<sub>f</sub></span> <b id="bfv"></b></label><input type="range" id="bf" min="-3" max="6" step="0.1" value="4"></div>
+      <div class="control"><label><span>input-gate bias b<sub>i</sub></span> <b id="biv"></b></label><input type="range" id="bi" min="-6" max="2" step="0.1" value="-4"></div>
+      <div class="control"><label><span>output-gate bias b<sub>o</sub></span> <b id="bov"></b></label><input type="range" id="bo" min="-3" max="4" step="0.1" value="2"></div>
+      <div class="control"><label>noise strength <b id="nzv"></b></label><input type="range" id="nz" min="0" max="1" step="0.05" value="0.5"></div>
+    </div>
+    <canvas id="lc"></canvas>
+    <div class="table-wrap" style="margin-top:10px"><table class="gtab" id="gtab"></table></div>
+    <div class="readout" id="lout"></div>
+  </div>
+
+  <h2 id="why">Why gradients survive in an LSTM</h2>
+  <div class="callout math"><div class="tag">📐 The constant error carousel</div>
+    <div class="formula">∂c<sub>t</sub> / ∂c<sub>t−1</sub> = f<sub>t</sub> &nbsp;(+ smaller indirect terms through h<sub>t−1</sub>)</div>
+    <p>Along the cell path, the gradient back k steps is roughly the product of forget gates f<sub>t</sub>·f<sub>t−1</sub>·…, with no squashing tanh′ and no repeated W<sub>hh</sub> multiplication. If the model keeps f ≈ 1 for information it needs, the gradient flows almost undiminished. That's why initialising the <b>forget-gate bias to 1</b> (so f ≈ 0.73 at the start) helps the LSTM learn long dependencies from the first epoch (Gers et al., 2000; Jozefowicz et al., 2015).</p>
+    <p>LSTMs can still <b>explode</b> through the h-path, so you still clip gradients. They reduce vanishing a lot but don't make memory infinite: dependencies of hundreds of steps are feasible, thousands are hard.</p>
+  </div>
+
+  <h2 id="params">Parameter count: 4× a vanilla RNN</h2>
+  <div class="callout math"><div class="tag">📐 Formula</div><div class="formula">params per layer per direction = 4 × (I·H + H·H + 2H)</div><p>Worked example: I = 32, H = 128, 1 layer → 4 × (4,096 + 16,384 + 256) = <b>82,944</b>. The 4 is the three gates plus the candidate. PyTorch stores two bias vectors (b<sub>ih</sub> and b<sub>hh</sub>), hence 2H.</p></div>
+  <div class="widget"><div class="widget-title">Parameter &amp; shape calculator</div><div id="pc"></div></div>
+
+  <h2 id="torch">PyTorch API cheat sheet</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Argument</th><th>Default</th><th>Notes</th></tr>
+    <tr><td><code>input_size</code>, <code>hidden_size</code></td><td>—</td><td>Feature size per step; size of h and c</td></tr>
+    <tr><td><code>num_layers</code></td><td>1</td><td>Stacked LSTMs</td></tr>
+    <tr><td><code>batch_first</code></td><td>False</td><td>Set True for (B, T, I) inputs. Note h_n/c_n stay (L·D, B, H)</td></tr>
+    <tr><td><code>dropout</code></td><td>0</td><td>Between layers only (ignored with 1 layer); not recurrent dropout</td></tr>
+    <tr><td><code>bidirectional</code></td><td>False</td><td>Output size 2H; h_n[-2] = last layer forward, h_n[-1] = last layer backward</td></tr>
+    <tr><td><code>proj_size</code></td><td>0</td><td>LSTM with projection (LSTMP): h has size proj_size, c keeps hidden_size. Saves parameters in big models</td></tr>
+    <tr><td>Returns</td><td colspan="2"><code>output, (h_n, c_n)</code>: output (B, T, D·H); h_n and c_n (L·D, B, H). <code>nn.LSTMCell</code> gives one step for custom loops.</td></tr>
+  </table></div>
+
+  <h2 id="variants">Variants you should know</h2>
+  <div class="grid two">
+    <div class="card"><h4>Peephole LSTM</h4><p>Gates also look at the cell state c<sub>t−1</sub>. It helps with precise timing tasks; rarely used today (not in cuDNN).</p></div>
+    <div class="card"><h4>CIFG / coupled gates</h4><p>Ties the input gate to (1 − forget gate): "only write as much as you forget". Fewer parameters, similar accuracy. It's the idea that leads to the GRU.</p></div>
+    <div class="card"><h4>Bidirectional &amp; stacked LSTM</h4><p>BiLSTM for offline tagging (NER, BiLSTM-CRF), 2–3 layers for capacity.</p></div>
+    <div class="card"><h4>Encoder–decoder LSTM</h4><p>Seq2seq for translation and multi-step forecasting. Add attention over the encoder outputs to remove the bottleneck.</p></div>
+    <div class="card"><h4>ConvLSTM</h4><p>Gates use convolutions instead of matrix multiplies, so the state is an image-like grid. Used for precipitation nowcasting and video frames.</p></div>
+    <div class="card"><h4>LSTM autoencoder</h4><p>Encode a sequence into h<sub>T</sub> and reconstruct it. Reconstruction error flags anomalous sequences (sensor faults, account behaviour).</p></div>
+    <div class="card"><h4>AWD-LSTM</h4><p>Regularisation recipe: DropConnect on the recurrent weights, variational dropout, NT-ASGD. It was the strongest LSTM language model before transformers.</p></div>
+    <div class="card"><h4>xLSTM (2024)</h4><p>A modern revival with exponential gating and matrix memory (sLSTM/mLSTM), positioned as a linear-time competitor to transformers. Good to mention to show you know the field.</p></div>
+  </div>
+
+  <h2 id="hp">Hyperparameters</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Parameter</th><th>Start with</th><th>Raise when…</th><th>Lower when…</th></tr>
+    <tr><td>hidden_size</td><td>64–256</td><td>Underfitting; complex long patterns</td><td>Overfitting; latency/memory limits</td></tr>
+    <tr><td>num_layers</td><td>1–2</td><td>Train loss plateaus high</td><td>Unstable or slow training (rarely &gt;3)</td></tr>
+    <tr><td>dropout (between layers / on embeddings / before head)</td><td>0.2</td><td>Train ≫ val performance</td><td>Underfitting</td></tr>
+    <tr><td>learning rate (Adam)</td><td>1e-3</td><td>Loss decreasing very slowly</td><td>Spikes / NaN (also clip)</td></tr>
+    <tr><td>gradient clip norm</td><td>1.0</td><td>Clipping almost every step and learning is slow</td><td>Spikes persist</td></tr>
+    <tr><td>sequence length</td><td>Business window (30–200)</td><td>Important early context is cut off</td><td>Slow training; truncate or aggregate old history</td></tr>
+    <tr><td>batch size</td><td>64</td><td>GPU under-used</td><td>Generalisation worsens</td></tr>
+    <tr><td>forget-gate bias init</td><td>1.0</td><td>Long dependencies aren't learned</td><td>—</td></tr>
+    <tr><td>W<sub>hh</sub> init</td><td>orthogonal</td><td colspan="2">Keeps the recurrent signal norm stable</td></tr>
+  </table></div>
+
+  <h2 id="improve">How to improve LSTM performance</h2>
+  <div class="callout win"><div class="tag">✅ Checklist, roughly in order of payoff</div>
+  <ol>
+    <li><b>Better inputs</b>: per-step features with signal (log amount, embeddings for categoricals, <b>time since the previous event</b>, hour/day cycles as sin/cos). Normalise numerics.</li>
+    <li><b>Right window</b>: test several lookbacks; aggregate very old history into summary features instead of making the sequence longer.</li>
+    <li><b>Correct last-state extraction</b> with packing (see bugs below). This often "fixes" a mysteriously weak model.</li>
+    <li><b>Stabilise training</b>: gradient clipping, forget bias 1, orthogonal init, LR schedule (ReduceLROnPlateau / cosine), early stopping.</li>
+    <li><b>Regularise</b>: dropout on embeddings, between layers and before the head; weight decay; variational/weight dropout for language-model style tasks.</li>
+    <li><b>Use all hidden states</b>: attention pooling or max+mean pooling over outputs often beats the last state alone for classification.</li>
+    <li><b>Combine with static features</b>: concatenate h<sub>T</sub> with customer-level features (or feed h<sub>T</sub> into a GBDT).</li>
+    <li><b>Imbalance</b>: weighted BCE or focal loss; threshold from the business cost.</li>
+    <li><b>Benchmark alternatives</b>: GRU (faster), TCN, transformer, or GBDT on aggregates. Keep the LSTM only if it wins on out-of-time validation.</li>
+  </ol></div>
+
+  <h2 id="bugs">Common LSTM bugs</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Bug</th><th>Symptom</th><th>Fix</th></tr>
+    <tr><td>Taking <code>output[:, -1]</code> on padded batches</td><td>Short sequences score badly; performance depends on padding</td><td>Pack the sequences and use <code>h_n[-1]</code>, or gather the output at length − 1</td></tr>
+    <tr><td>Treating h_n as batch-first</td><td>Shape errors or silently mixed samples</td><td>h_n is (L·D, B, H); index the layer first</td></tr>
+    <tr><td>Bidirectional: using only h_n[-1]</td><td>Losing the forward direction's summary</td><td>Concatenate h_n[-2] and h_n[-1]</td></tr>
+    <tr><td>Stateful training without <code>detach()</code></td><td>Memory grows each batch; "backward through the graph a second time" error</td><td><code>h, c = h.detach(), c.detach()</code> between batches</td></tr>
+    <tr><td>Future leakage in the sequence</td><td>Great offline AUC, poor production</td><td>Build sequences strictly from events before the prediction time</td></tr>
+    <tr><td>Unscaled numeric inputs</td><td>Saturated gates; slow or no learning</td><td>Standardise / log-transform</td></tr>
+    <tr><td>No gradient clipping</td><td>Occasional loss spikes to NaN</td><td><code>clip_grad_norm_(…, 1.0)</code></td></tr>
+  </table></div>
+
+  <h2 id="industry">Where LSTMs are used</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Industry</th><th>Use case</th><th>Design</th></tr>
+    <tr><td>Fintech / banking</td><td>Transaction fraud, account takeover from login sequences</td><td>Many-to-one LSTM over the last N events (embeddings + time deltas), concatenated with static features; streaming state update per event</td></tr>
+    <tr><td>Banking</td><td>Credit risk from bank-statement sequences, churn from monthly activity</td><td>LSTM embeddings feeding a GBDT / scorecard for explainability</td></tr>
+    <tr><td>Retail / supply chain</td><td>Demand forecasting</td><td>Encoder–decoder LSTM or DeepAR (an LSTM-based probabilistic forecaster)</td></tr>
+    <tr><td>Manufacturing / IoT</td><td>Predictive maintenance, remaining useful life</td><td>Stacked LSTM regressor on sensor windows; LSTM autoencoder for anomalies</td></tr>
+    <tr><td>Telecom / energy</td><td>Network KPI anomalies, load forecasting</td><td>LSTM forecaster + residual thresholds</td></tr>
+    <tr><td>NLP (legacy and on-device)</td><td>NER, keyboard next-word, speech</td><td>BiLSTM-CRF taggers; small on-device LSTMs where transformers are too heavy</td></tr>
+  </table></div>
+
+  <h2 id="code">Code</h2>
+  <script type="text/plain" class="snippet" data-title="LSTM cell from scratch, checked against nn.LSTM (gate order i, f, g, o)">
+    import torch, torch.nn as nn
+
+    torch.manual_seed(0)
+    B, T, I, H = 2, 6, 3, 5
+    x = torch.randn(B, T, I)
+    lstm = nn.LSTM(I, H, batch_first=True)
+    W_ih, W_hh = lstm.weight_ih_l0, lstm.weight_hh_l0      # (4H, I), (4H, H)
+    b = lstm.bias_ih_l0 + lstm.bias_hh_l0                    # (4H,)
+
+    h = torch.zeros(B, H); c = torch.zeros(B, H)
+    for t in range(T):
+        gates = x[:, t] @ W_ih.T + h @ W_hh.T + b            # one matmul for all four gates
+        i, f, g, o = gates.chunk(4, dim=1)
+        i, f, g, o = torch.sigmoid(i), torch.sigmoid(f), torch.tanh(g), torch.sigmoid(o)
+        c = f * c + i * g                                     # add, don't overwrite
+        h = o * torch.tanh(c)
+
+    out, (h_n, c_n) = lstm(x)
+    print(torch.allclose(h, h_n[0], atol=1e-6), torch.allclose(c, c_n[0], atol=1e-6))  # True True
+  </script>
+  <script type="text/plain" class="snippet" data-title="production-style LSTM: forget-bias init, orthogonal init, attention pooling">
+    import torch, torch.nn as nn
+
+    class LSTMScorer(nn.Module):
+        def __init__(self, n_cat, n_num, n_static, emb=16, hidden=128, layers=2):
+            super().__init__()
+            self.emb = nn.Embedding(n_cat, emb, padding_idx=0)
+            self.lstm = nn.LSTM(emb + n_num, hidden, num_layers=layers,
+                                batch_first=True, dropout=0.2)
+            self.attn = nn.Linear(hidden, 1)                    # attention pooling over steps
+            self.head = nn.Sequential(nn.Linear(hidden + n_static, 64), nn.ReLU(),
+                                      nn.Dropout(0.2), nn.Linear(64, 1))
+            for name, p in self.lstm.named_parameters():
+                if "weight_hh" in name:
+                    nn.init.orthogonal_(p)
+                elif "bias_ih" in name:
+                    p.data.zero_(); p.data[hidden:2 * hidden] = 1.0   # forget-gate bias = 1
+                elif "bias_hh" in name:
+                    p.data.zero_()
+
+        def forward(self, cat_seq, num_seq, mask, static):
+            # cat_seq (B,T), num_seq (B,T,n_num), mask (B,T) True for real steps, static (B,n_static)
+            out, _ = self.lstm(torch.cat([self.emb(cat_seq), num_seq], -1))     # (B,T,H)
+            score = self.attn(out).squeeze(-1).masked_fill(~mask, float("-inf"))
+            w = torch.softmax(score, dim=1).unsqueeze(-1)                       # (B,T,1)
+            pooled = (w * out).sum(1)                                           # (B,H)
+            return self.head(torch.cat([pooled, static], -1)).squeeze(-1)
+
+    m = LSTMScorer(n_cat=300, n_num=4, n_static=6)
+    B, T = 3, 10
+    mask = torch.arange(T)[None, :] < torch.tensor([10, 7, 3])[:, None]
+    print(m(torch.randint(1, 300, (B, T)), torch.randn(B, T, 4), mask, torch.randn(B, 6)).shape)
+  </script>
+  <script type="text/plain" class="snippet" data-title="encoder-decoder LSTM forecaster (multi-step, autoregressive decoder)">
+    class Seq2SeqForecaster(nn.Module):
+        def __init__(self, n_feat=1, hidden=64, horizon=7):
+            super().__init__()
+            self.horizon = horizon
+            self.encoder = nn.LSTM(n_feat, hidden, batch_first=True)
+            self.decoder = nn.LSTMCell(1, hidden)
+            self.out = nn.Linear(hidden, 1)
+
+        def forward(self, history, target=None, teacher_forcing=0.5):
+            _, (h, c) = self.encoder(history)            # summarise the lookback window
+            h, c = h[-1], c[-1]
+            y_prev = history[:, -1, :1]                  # last observed value
+            preds = []
+            for t in range(self.horizon):
+                h, c = self.decoder(y_prev, (h, c))
+                y = self.out(h); preds.append(y)
+                use_truth = target is not None and torch.rand(1).item() < teacher_forcing
+                y_prev = target[:, t:t + 1] if use_truth else y
+            return torch.cat(preds, dim=1)               # (B, horizon)
+
+    f = Seq2SeqForecaster()
+    print(f(torch.randn(4, 28, 1)).shape)                # torch.Size([4, 7])
+  </script>
+  <script type="text/plain" class="snippet" data-title="stateful streaming: update the state once per new event (real-time fraud)">
+    cell = nn.LSTMCell(input_size=20, hidden_size=64)
+    state = {}                                           # customer_id -> (h, c), e.g. in Redis
+
+    @torch.no_grad()
+    def on_new_event(customer_id, event_vec, head):
+        h, c = state.get(customer_id, (torch.zeros(1, 64), torch.zeros(1, 64)))
+        h, c = cell(event_vec.view(1, -1), (h, c))       # O(1) work per event
+        state[customer_id] = (h, c)
+        return torch.sigmoid(head(h)).item()             # fraud probability now
+
+    head = nn.Linear(64, 1)
+    print(round(on_new_event("cust_42", torch.randn(20), head), 3))
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Walk me through the LSTM gates.</summary><div class="ans"><p>All gates read [x<sub>t</sub>, h<sub>t−1</sub>]. Forget gate f (sigmoid) scales the old cell state, i.e. what to erase. Input gate i (sigmoid) scales a tanh candidate g, i.e. what new content to add. Cell update c<sub>t</sub> = f⊙c<sub>t−1</sub> + i⊙g. Output gate o (sigmoid) decides what to expose: h<sub>t</sub> = o⊙tanh(c<sub>t</sub>).</p></div></details>
+  <details class="qa"><summary>Why does the LSTM mitigate vanishing gradients?</summary><div class="ans"><p>The cell state is updated additively, so ∂c<sub>t</sub>/∂c<sub>t−1</sub> ≈ f<sub>t</sub> with no W<sub>hh</sub> multiplication or tanh′ squashing on that path. If the network learns f ≈ 1 for important information, gradients pass through many steps nearly unchanged (the constant error carousel).</p></div></details>
+  <details class="qa"><summary>Why sigmoid for gates and tanh for the candidate?</summary><div class="ans"><p>Gates are valves, so they need a 0–1 range that multiplies content (0 = block, 1 = pass). The candidate is content to add, which needs to be signed and bounded (−1..1) so it can increase or decrease memory without blowing up.</p></div></details>
+  <details class="qa"><summary>Why initialise the forget-gate bias to 1?</summary><div class="ans"><p>With zero bias, f starts around 0.5, so memory halves every step and gradients decay from the start. A bias of 1 makes f ≈ 0.73, so the LSTM remembers by default early in training and can learn long dependencies more easily (Gers et al. 2000; Jozefowicz et al. 2015).</p></div></details>
+  <details class="qa"><summary>Cell state vs hidden state?</summary><div class="ans"><p>The cell state c is long-term memory, updated additively and not directly exposed. The hidden state h = o⊙tanh(c) is the gated, squashed read-out used as the step's output and fed into the next step's gates.</p></div></details>
+  <details class="qa"><summary>How many parameters does an LSTM layer have?</summary><div class="ans"><p>4·(I·H + H·H + H) with one bias vector, or 4·(I·H + H·H + 2H) in PyTorch, which keeps two. E.g. I = 32, H = 128 gives 82,944 in PyTorch. It's four times a vanilla RNN because of the three gates plus the candidate.</p></div></details>
+  <details class="qa"><summary>Can an LSTM still have exploding gradients?</summary><div class="ans"><p>Yes. Paths through h<sub>t−1</sub> and the recurrent weights can still amplify. That's why gradient clipping remains standard with LSTMs.</p></div></details>
+  <details class="qa"><summary>How would you use an LSTM for fraud detection in real time?</summary><div class="ans"><p>Represent each customer's events (amount, MCC embedding, channel, time delta, device) as a sequence. Train a many-to-one LSTM on the last N events before each labelled transaction, using out-of-time validation. In production, keep each customer's (h, c) in a fast store and update it with an LSTMCell as each event arrives (O(1)). Score with a head on h plus current-transaction features, and monitor drift.</p></div></details>
+  <details class="qa"><summary>LSTM vs transformer: when would you still choose the LSTM?</summary><div class="ans"><p>Streaming or on-device inference with constant memory per step, small or medium data, short-to-moderate sequences, and strict latency on CPU. Transformers win with large data, long-range context, pretraining and parallel training.</p></div></details>
+  <details class="qa"><summary>What does a BiLSTM-CRF do?</summary><div class="ans"><p>A bidirectional LSTM gives each token context from both sides. A CRF layer on top models dependencies between adjacent labels (e.g. I-PER can't follow B-ORG) and decodes the best label sequence with Viterbi. It was the classic NER architecture before BERT.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id),sig=DLP_sig,T=20;
+  const noiseAt=t=>((Math.sin(t*91.7+3.1)*43758.5453)%1);
+  function run(){
+    const pat=$('lpat').value,bf=+$('bf').value,bi=+$('bi').value,bo=+$('bo').value,nz=+$('nz').value;
+    $('bfv').textContent=bf.toFixed(1);$('biv').textContent=bi.toFixed(1);$('bov').textContent=bo.toFixed(1);$('nzv').textContent=nz.toFixed(2);
+    let c=0,h=0,rh=0;const C=[],Hs=[],R=[],X=[],rows=[];
+    for(let t=0;t<T;t++){
+      const sigTok=t===0, reset=pat==='reset'&&t===11;
+      const x=sigTok?(pat==='neg'?-1:1):reset?0:noiseAt(t)*nz;
+      const f=sig(bf-(reset?10:0)), i=sig(bi+(sigTok?8:0)), g=Math.tanh(2*x), o=sig(bo);
+      c=f*c+i*g; h=o*Math.tanh(c); rh=Math.tanh(0.9*rh+1.5*x);
+      C.push(c);Hs.push(h);R.push(rh);X.push(x);
+      if(t<4||reset||t===T-1)rows.push([t+1,x,f,i,g,o,c,h,reset]);
+    }
+    DLP_seriesChart($('lc'),[{name:'input xₜ',values:X,color:'#e2554f',bars:true},{name:'LSTM cell cₜ',values:C,color:'accent'},{name:'LSTM hidden hₜ',values:Hs,color:'#0f766e',dash:[5,4]},{name:'vanilla RNN hₜ',values:R,color:'#b45309',dash:[2,3]}],{min:-1.2,max:1.2,height:260});
+    $('gtab').innerHTML='<tr><th>step</th><th>x</th><th>forget f</th><th>input i</th><th>cand g</th><th>output o</th><th>cell c</th><th>hidden h</th></tr>'+rows.map(r=>`<tr${r[8]?' style="background:var(--coral-soft)"':''}><td>t${r[0]}${r[8]?' RESET':''}</td>${r.slice(1,8).map(v=>`<td>${v.toFixed(3)}</td>`).join('')}</tr>`).join('');
+    const target=Math.tanh(2*(pat==='neg'?-1:1))*sig(bi+8);const kept=C[T-1]/target;
+    $('lout').innerHTML=`Value written at t1: <b>${target.toFixed(3)}</b> → still in the cell at t${T}: <b>${C[T-1].toFixed(3)}</b> (${(kept*100).toFixed(0)}%) &nbsp;|&nbsp; vanilla RNN at t${T}: <b>${R[T-1].toFixed(3)}</b> `+
+      (pat==='reset'?(Math.abs(C[T-1])<0.1?'&nbsp;|&nbsp; <span style="color:var(--green)">the reset token deliberately cleared memory ✓</span>':''):
+      (kept>0.7&&Math.abs(kept)<1.3?'&nbsp;|&nbsp; <span style="color:var(--green)">LSTM remembered ✓</span>':kept<0.3?'&nbsp;|&nbsp; <span style="color:var(--coral)">forgotten: raise the forget bias</span>':'&nbsp;|&nbsp; <span style="color:var(--amber)">memory polluted by noise: lower the input bias</span>'));
+  }
+  ['lpat','bf','bi','bo','nz'].forEach(id=>$(id).addEventListener('input',run));
+  DLP_paramCalc('pc','LSTM');run();
+  window.addEventListener('resize',run);window.addEventListener('dlp-theme',run);
+})();
+</script>
+</body>
+</html>

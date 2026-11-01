@@ -22,18 +22,20 @@ Every topic has four layers:
 | 04 | [CNNs](cnn.html) | Convolution, architecture history (LeNet → ConvNeXt V2 → DINOv3), transfer learning *(live convolution, conv calculator)* |
 | 05 | [CV II: Detection & segmentation](cv-detection.html) | IoU, NMS, mAP, YOLO/Faster R-CNN/DETR family, U-Net, Mask R-CNN, SAM 3, OCR, tracking, face match *(IoU + NMS playgrounds)* |
 | 06 | [CV III: Vision performance playbook](cv-performance.html) | Diagnose by symptom, data levers, augmentation, fine-tuning recipe, hyperparameter table, backbone choice, TTA, quantisation *(augmentation preview)* |
-| 07 | [RNN / LSTM / GRU](rnn.html) | BPTT, vanishing gradients, gates *(gradient decay plot)* |
-| 08 | [Transformers](transformers.html) | Q/K/V, √d scaling, multi-head, positional encoding, BERT vs GPT *(attention heatmap)* |
-| 09 | [Embeddings & NLP](nlp.html) | Word2Vec → BERT, tokenisation, semantic search, fine-tuning |
-| 10 | [Recommender systems](recsys.html) | Funnel, MF, two-tower, DCN/DLRM/DIN, NDCG, cold start |
-| 11 | [Time series](timeseries.html) | DeepAR, TFT, N-HiTS, PatchTST, foundation models, walk-forward CV |
-| 12 | [Anomaly & GNNs](anomaly.html) | Autoencoders, GraphSAGE/GAT for fraud rings & AML |
-| 13 | [Generative AI & LLMs](genai.html) | VAE/GAN/diffusion, RLHF/DPO, RAG, LoRA, evaluation |
-| 14 | [Industry playbook](industry.html) | Fintech, banking, e-commerce, insurance, logistics, healthcare, telecom, ads, manufacturing |
-| 15 | [Which model when?](chooser.html) | Interactive model chooser + cheat sheets |
-| 16 | [Model encyclopedia](models.html) | 62 models: intuition, key parameters with starting values, how to improve, when to use/avoid, interview point |
-| 17 | [Production & explainability](production.html) | Serving, quantisation, drift (PSI), calibration, SHAP, fairness |
-| 18 | [Interview question bank](interview.html) | 81 questions (incl. 21 computer vision) with flashcard mode |
+| 07 | [Sequences I: RNN](rnn.html) | Task shapes, recurrence, BPTT, vanishing/exploding gradients, shapes, packing *(step-through simulator, parameter calculator)* |
+| 08 | [Sequences II: LSTM](lstm.html) | Gates and cell state, why gradients survive, parameters, variants, tuning, bugs, industry designs *(LSTM cell simulator)* |
+| 09 | [Sequences III: GRU](gru.html) | Update/reset gates, LSTM vs GRU, GRU4Rec, GRU-D *(GRU cell simulator)* |
+| 10 | [Transformers](transformers.html) | Q/K/V, √d scaling, multi-head, positional encoding, BERT vs GPT *(attention heatmap)* |
+| 11 | [Embeddings & NLP](nlp.html) | Word2Vec → BERT, tokenisation, semantic search, fine-tuning |
+| 12 | [Recommender systems](recsys.html) | Funnel, MF, two-tower, DCN/DLRM/DIN, NDCG, cold start |
+| 13 | [Time series](timeseries.html) | DeepAR, TFT, N-HiTS, PatchTST, foundation models, walk-forward CV |
+| 14 | [Anomaly & GNNs](anomaly.html) | Autoencoders, GraphSAGE/GAT for fraud rings & AML |
+| 15 | [Generative AI & LLMs](genai.html) | VAE/GAN/diffusion, RLHF/DPO, RAG, LoRA, evaluation |
+| 16 | [Industry playbook](industry.html) | Fintech, banking, e-commerce, insurance, logistics, healthcare, telecom, ads, manufacturing |
+| 17 | [Which model when?](chooser.html) | Interactive model chooser + cheat sheets |
+| 18 | [Model encyclopedia](models.html) | 62 models: intuition, key parameters with starting values, how to improve, when to use/avoid, interview point |
+| 19 | [Production & explainability](production.html) | Serving, quantisation, drift (PSI), calibration, SHAP, fairness |
+| 20 | [Interview question bank](interview.html) | 81 questions (incl. 21 computer vision) with flashcard mode |
 
 ## Run locally
 

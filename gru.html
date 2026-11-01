@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sequences III · GRU in depth · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script><script src="assets/seq.js"></script>
+<style>.gtab td,.gtab th{font-family:var(--mono);font-size:12.5px;padding:6px 9px;text-align:right}.gtab td:first-child,.gtab th:first-child{text-align:left}</style>
+</head>
+<body data-page="gru">
+<main>
+  <div class="eyebrow">Sequences III · Week 4 · Gated Recurrent Unit</div>
+  <h1>GRU in depth (and LSTM vs GRU)</h1>
+  <p class="lede">The GRU (Cho et al., 2014) keeps the LSTM's core trick, gated additive memory, but folds it into <b>one state and two gates</b>. It has about 25% fewer parameters than an LSTM of the same size, trains faster, and performs on par in most real-world tasks. That's why it's often the first recurrent model to try.</p>
+  <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Three-part series</div><p><a href="rnn.html">I. RNN</a> → <a href="lstm.html">II. LSTM</a> → <b>III. GRU</b> (this page).</p></div>
+  <div class="toc"><a href="#intuition">Intuition</a><a href="#eq">Equations</a><a href="#sim">GRU simulator</a><a href="#why">Why it works</a><a href="#vs">LSTM vs GRU</a><a href="#params">Parameters</a><a href="#torch">PyTorch API</a><a href="#variants">Variants</a><a href="#hp">Hyperparameters</a><a href="#improve">Improving performance</a><a href="#industry">Industry uses</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+
+  <h2 id="intuition">Intuition: a dimmer switch between old and new</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>A GRU keeps <b>one</b> memory vector. At every step it asks two questions. <b>Reset gate r</b>: "When drafting a new memory, how much of the past should I look at?" (r ≈ 0 means start fresh, as at the start of a new session). <b>Update gate z</b>: "Should I keep the old memory or replace it with the draft?" It works like a dimmer that blends old and new. The LSTM's separate forget and input gates are merged into this one dimmer: <i>whatever fraction you keep, you don't write</i>.</p></div>
+  <div class="grid two">
+    <div class="card"><div class="kicker">gate 1</div><h4>Update gate z<sub>t</sub></h4><p>Blend weight between the old state and the candidate. It plays the role of both the LSTM's forget gate and input gate (they're coupled: keep z, write 1 − z).</p></div>
+    <div class="card"><div class="kicker">gate 2</div><h4>Reset gate r<sub>t</sub></h4><p>How much of h<sub>t−1</sub> to use when computing the candidate. Lets the unit ignore irrelevant history for the new proposal.</p></div>
+    <div class="card"><div class="kicker">proposal</div><h4>Candidate n<sub>t</sub> (h̃<sub>t</sub>)</h4><p>New content computed from the input and the reset-filtered past, squashed by tanh.</p></div>
+    <div class="card"><div class="kicker">no cell state</div><h4>Single state h<sub>t</sub></h4><p>Memory and output are the same vector, and there's no output gate. Simpler and cheaper, with slightly less control over what is exposed.</p></div>
+  </div>
+
+  <h2 id="eq">The equations</h2>
+  <div class="callout math"><div class="tag">📐 One GRU step (PyTorch convention)</div>
+    <p style="font-family:var(--serif);font-size:17.5px;line-height:2.05">
+    r<sub>t</sub> = σ(W<sub>r</sub> x<sub>t</sub> + U<sub>r</sub> h<sub>t−1</sub> + b<sub>r</sub>) &nbsp; <span style="font-size:14px;color:var(--muted)">reset gate</span><br>
+    z<sub>t</sub> = σ(W<sub>z</sub> x<sub>t</sub> + U<sub>z</sub> h<sub>t−1</sub> + b<sub>z</sub>) &nbsp; <span style="font-size:14px;color:var(--muted)">update gate</span><br>
+    n<sub>t</sub> = tanh(W<sub>n</sub> x<sub>t</sub> + b<sub>in</sub> + r<sub>t</sub> ⊙ (U<sub>n</sub> h<sub>t−1</sub> + b<sub>hn</sub>)) &nbsp; <span style="font-size:14px;color:var(--muted)">candidate</span><br>
+    <b>h<sub>t</sub> = (1 − z<sub>t</sub>) ⊙ n<sub>t</sub> + z<sub>t</sub> ⊙ h<sub>t−1</sub></b></p>
+    <p>In this convention <b>z ≈ 1 keeps the old state</b> and z ≈ 0 replaces it. Some textbooks swap z and 1 − z; it's the same model with the gate's meaning flipped, so state which convention you use in an interview. PyTorch packs the weights in the order <b>r, z, n</b>, and applies r <i>after</i> the hidden-side bias (the cuDNN variant). Cho et al.'s original applies r to h<sub>t−1</sub> before the matrix multiply. Both work similarly.</p>
+  </div>
+
+  <h2 id="sim">GRU cell simulator</h2>
+  <div class="widget">
+    <div class="widget-title">Keep the t1 signal alive through 20 steps of noise</div>
+    <div class="widget-sub">A one-unit GRU. On the signal token the update gate opens (writes); otherwise its bias decides how much it keeps. The reset gate controls how much the old state feeds into each new candidate. Try keep-bias 5 (remembers), 0 (forgets), and the "new session" pattern (a reset token at t12 makes the unit overwrite its memory).</div>
+    <div class="controls">
+      <div class="control"><label>pattern</label><select id="gpat"><option value="pos">+1 signal, then noise</option><option value="neg">−1 signal, then noise</option><option value="sess">signal, noise, NEW SESSION at t12</option></select></div>
+      <div class="control"><label><span>update-gate (keep) bias b<sub>z</sub></span> <b id="bzv"></b></label><input type="range" id="bz" min="-3" max="7" step="0.1" value="5"></div>
+      <div class="control"><label><span>reset-gate bias b<sub>r</sub></span> <b id="brv"></b></label><input type="range" id="br" min="-4" max="4" step="0.1" value="1"></div>
+      <div class="control"><label>noise strength <b id="gnzv"></b></label><input type="range" id="gnz" min="0" max="1" step="0.05" value="0.5"></div>
+    </div>
+    <canvas id="gc"></canvas>
+    <div class="table-wrap" style="margin-top:10px"><table class="gtab" id="gtab"></table></div>
+    <div class="readout" id="gout"></div>
+  </div>
+
+  <h2 id="why">Why gradients survive in a GRU</h2>
+  <div class="callout math"><div class="tag">📐 The direct path</div>
+    <div class="formula">∂h<sub>t</sub>/∂h<sub>t−1</sub> = diag(z<sub>t</sub>) + (terms through n<sub>t</sub>, r<sub>t</sub>, z<sub>t</sub>)</div>
+    <p>The interpolation h<sub>t</sub> = z⊙h<sub>t−1</sub> + (1−z)⊙n gives a <b>direct, gated, additive path</b> from h<sub>t−1</sub> to h<sub>t</sub>, just like the LSTM's cell path. Where the model learns z ≈ 1, information and gradient pass through many steps nearly unchanged. It's also a learned version of a residual (skip) connection through time.</p>
+  </div>
+
+  <h2 id="vs">LSTM vs GRU: the comparison interviewers want</h2>
+  <div class="table-wrap"><table>
+    <tr><th></th><th>LSTM</th><th>GRU</th></tr>
+    <tr><td>States</td><td>Two: cell c (long-term) + hidden h (output)</td><td>One: h is both memory and output</td></tr>
+    <tr><td>Gates</td><td>3: forget, input, output (+ candidate)</td><td>2: update, reset (+ candidate)</td></tr>
+    <tr><td>Forget vs write</td><td>Independent: can keep everything <i>and</i> write new info</td><td>Coupled: keep z, write 1 − z</td></tr>
+    <tr><td>Output control</td><td>Output gate can hide memory from h</td><td>No output gate; memory is fully exposed</td></tr>
+    <tr><td>Parameters per layer</td><td>4·(IH + H² + 2H)</td><td>3·(IH + H² + 2H), ~25% fewer</td></tr>
+    <tr><td>Speed / memory</td><td>Slower, more activations stored</td><td>Faster to train and infer</td></tr>
+    <tr><td>Accuracy</td><td colspan="2">Large empirical comparisons (Chung et al. 2014; Jozefowicz et al. 2015) found <b>neither consistently wins</b>; Greff et al. (2017) also found no LSTM variant reliably beat the standard LSTM. Results are task-dependent and usually within noise once tuned. LSTM with forget-bias 1 has a slight edge on some language-modelling tasks.</td></tr>
+    <tr><td>Data needs</td><td>More parameters, so slightly more data-hungry</td><td>Often better with small data</td></tr>
+    <tr><td>Rule of thumb</td><td>Very long dependencies, need to separate memory from output</td><td>First try; latency or size constraints; smaller datasets</td></tr>
+  </table></div>
+  <div class="callout interview"><div class="tag">🎯 The one-liner</div><p>"A GRU merges the LSTM's forget and input gates into a single update gate and drops the separate cell state and output gate. That's ~25% fewer parameters and faster, with similar accuracy on most tasks. I'd try a GRU first and switch to an LSTM if very long dependencies or validation results justify it."</p></div>
+
+  <h2 id="params">Parameter count</h2>
+  <div class="callout math"><div class="tag">📐 Formula</div><div class="formula">params per layer per direction = 3 × (I·H + H·H + 2H)</div><p>I = 32, H = 128, 1 layer → 3 × 20,736 = <b>62,208</b> (vs 82,944 for an LSTM and 20,736 for a vanilla RNN).</p></div>
+  <div class="widget"><div class="widget-title">Parameter &amp; shape calculator</div><div id="pc"></div></div>
+
+  <h2 id="torch">PyTorch API</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Item</th><th>Details</th></tr>
+    <tr><td><code>nn.GRU(input_size, hidden_size, num_layers=1, batch_first=False, dropout=0, bidirectional=False)</code></td><td>Same arguments as nn.RNN; no proj_size</td></tr>
+    <tr><td>Returns</td><td><code>output, h_n</code>: output (B, T, D·H) with batch_first; h_n (L·D, B, H). There's no c_n, which is a common code difference from LSTM.</td></tr>
+    <tr><td><code>nn.GRUCell(input_size, hidden_size)</code></td><td>One step at a time, for streaming or custom decoders</td></tr>
+    <tr><td>Weight layout</td><td><code>weight_ih_l0</code> (3H, I) and <code>weight_hh_l0</code> (3H, H), chunked as r, z, n</td></tr>
+  </table></div>
+
+  <h2 id="variants">Variants and famous GRU systems</h2>
+  <div class="grid two">
+    <div class="card"><h4>Bidirectional / stacked GRU</h4><p>Same rules as LSTM: bidirectional for offline tagging, 1–3 layers, dropout between layers.</p></div>
+    <div class="card"><h4>GRU4Rec (2016)</h4><p>Session-based recommendation: a GRU reads the clicks in the current session and predicts the next item, trained with ranking losses (BPR/TOP1) and in-batch negatives. A classic e-commerce baseline before SASRec.</p></div>
+    <div class="card"><h4>GRU-D (2018)</h4><p>Handles <b>irregular, missing</b> time-series values (clinical data) by learning decays toward the mean based on the time since the last observation. Relevant to banking events with irregular gaps too.</p></div>
+    <div class="card"><h4>Minimal / light gated units</h4><p>Even simpler cells (MGU, a single forget gate; Li-GRU with ReLU for speech) trade a little accuracy for speed.</p></div>
+    <div class="card"><h4>GRU encoder–decoder</h4><p>The architecture where GRU was introduced (Cho et al. 2014, machine translation), later with Bahdanau attention.</p></div>
+    <div class="card"><h4>DeepAR-style forecasting</h4><p>Autoregressive RNN forecasters can use LSTM or GRU cells interchangeably; GRU is often faster with similar accuracy.</p></div>
+  </div>
+
+  <h2 id="hp">Hyperparameters</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Parameter</th><th>Start with</th><th>Notes</th></tr>
+    <tr><td>hidden_size</td><td>64–256</td><td>For the same parameter budget as an LSTM, a GRU can be ~15% wider</td></tr>
+    <tr><td>num_layers</td><td>1–2</td><td>Add dropout 0.1–0.3 between layers</td></tr>
+    <tr><td>learning rate</td><td>1e-3 Adam/AdamW</td><td>With ReduceLROnPlateau or cosine schedule</td></tr>
+    <tr><td>gradient clipping</td><td>1.0</td><td>Still needed</td></tr>
+    <tr><td>init</td><td>Orthogonal recurrent weights</td><td>Optionally a positive update-gate bias (keep by default), analogous to the LSTM forget bias</td></tr>
+    <tr><td>sequence length</td><td>Business window</td><td>Aggregate very old history into static features</td></tr>
+    <tr><td>batch size</td><td>64–256</td><td>Bucket by length</td></tr>
+  </table></div>
+
+  <h2 id="improve">How to improve GRU performance</h2>
+  <div class="callout win"><div class="tag">✅ Checklist</div>
+  <ol>
+    <li>Everything on the <a href="lstm.html#improve">LSTM checklist</a> applies: per-step features with time deltas, normalised numerics, embeddings for categoricals, packing, clipping, regularisation, pooling over outputs, combining with static features.</li>
+    <li><b>Spend the saved compute</b>: since a GRU is cheaper, try a wider hidden size or a second layer for the same latency.</li>
+    <li><b>Irregular timing</b>: add log(time since the last event) as an input, or use GRU-D-style decay for missing data.</li>
+    <li><b>Session data</b> (GRU4Rec style): use ranking losses with many sampled negatives, and session-parallel mini-batches.</li>
+    <li><b>Compare honestly</b>: GRU vs LSTM vs a small transformer vs GBDT on aggregates, with the same features and out-of-time validation, averaged over seeds (the differences are often within noise).</li>
+  </ol></div>
+
+  <h2 id="industry">Where GRUs are used</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Industry</th><th>Use case</th><th>Why GRU</th></tr>
+    <tr><td>Fintech / payments</td><td>Real-time behavioural fraud scoring per card or account</td><td>Cheaper per-event state update than an LSTM; one state vector to store per customer</td></tr>
+    <tr><td>E-commerce</td><td>Session-based next-item recommendation (GRU4Rec)</td><td>Anonymous users, short sessions</td></tr>
+    <tr><td>Banking</td><td>Churn and next-product propensity from monthly event sequences</td><td>Small-to-medium data, fast iteration</td></tr>
+    <tr><td>Healthcare</td><td>Clinical deterioration with irregular measurements (GRU-D)</td><td>Missing values and irregular timing</td></tr>
+    <tr><td>IoT / edge</td><td>On-device keyword spotting, sensor event models</td><td>Small footprint</td></tr>
+  </table></div>
+
+  <h2 id="code">Code</h2>
+  <script type="text/plain" class="snippet" data-title="GRU cell from scratch, checked against nn.GRU (gate order r, z, n)">
+    import torch, torch.nn as nn
+
+    torch.manual_seed(0)
+    B, T, I, H = 2, 6, 3, 5
+    x = torch.randn(B, T, I)
+    gru = nn.GRU(I, H, batch_first=True)
+    W_ih, W_hh = gru.weight_ih_l0, gru.weight_hh_l0        # (3H, I), (3H, H)
+    b_ih, b_hh = gru.bias_ih_l0, gru.bias_hh_l0
+
+    h = torch.zeros(B, H)
+    for t in range(T):
+        gi = x[:, t] @ W_ih.T + b_ih                          # input side, split r|z|n
+        gh = h @ W_hh.T + b_hh                                # hidden side, split r|z|n
+        i_r, i_z, i_n = gi.chunk(3, 1); h_r, h_z, h_n_ = gh.chunk(3, 1)
+        r = torch.sigmoid(i_r + h_r)
+        z = torch.sigmoid(i_z + h_z)
+        n = torch.tanh(i_n + r * h_n_)                        # reset applied to the hidden term
+        h = (1 - z) * n + z * h                               # z≈1 keeps the old state
+
+    out, h_last = gru(x)
+    print(torch.allclose(h, h_last[0], atol=1e-6))           # True
+  </script>
+  <script type="text/plain" class="snippet" data-title="GRU4Rec-style session recommender (next-item prediction)">
+    import torch, torch.nn as nn, torch.nn.functional as F
+
+    class SessionGRU(nn.Module):
+        def __init__(self, n_items, d=64):
+            super().__init__()
+            self.item_emb = nn.Embedding(n_items, d, padding_idx=0)
+            self.gru = nn.GRU(d, d, batch_first=True)
+        def forward(self, sessions):                  # (B, T) item ids, 0 = pad
+            h, _ = self.gru(self.item_emb(sessions))  # (B, T, d): state after each click
+            return h @ self.item_emb.weight.T         # (B, T, n_items) scores (tied weights)
+
+    model = SessionGRU(n_items=1000)
+    sess = torch.randint(1, 1000, (8, 12))
+    logits = model(sess[:, :-1])                      # predict the next click at every step
+    loss = F.cross_entropy(logits.reshape(-1, 1000), sess[:, 1:].reshape(-1), ignore_index=0)
+    print(round(loss.item(), 3))
+  </script>
+  <script type="text/plain" class="snippet" data-title="GRU vs LSTM: a fair comparison harness">
+    import torch, torch.nn as nn
+
+    def build(cell, I, H, layers=2):
+        RNN = {"gru": nn.GRU, "lstm": nn.LSTM}[cell]
+        return RNN(I, H, num_layers=layers, batch_first=True, dropout=0.2)
+
+    for cell, H in [("lstm", 128), ("gru", 148)]:     # roughly equal parameter budgets
+        m = build(cell, 32, H)
+        n = sum(p.numel() for p in m.parameters())
+        print(cell, H, f"{n:,} params")
+    # then: same features, same out-of-time split, 3+ seeds each, compare mean ± std of PR-AUC
+  </script>
+
+  <h2 id="qa">Interview Q&amp;A</h2>
+  <details class="qa"><summary>Explain the GRU's two gates.</summary><div class="ans"><p>The reset gate r decides how much of the previous state feeds into the candidate n. The update gate z blends: h<sub>t</sub> = z⊙h<sub>t−1</sub> + (1−z)⊙n<sub>t</sub> (PyTorch convention), so z ≈ 1 keeps memory and z ≈ 0 overwrites it with the candidate.</p></div></details>
+  <details class="qa"><summary>How is a GRU different from an LSTM?</summary><div class="ans"><p>One state instead of two (no separate cell state), two gates instead of three (no output gate), and forget and input are coupled into one update gate. That gives ~25% fewer parameters and faster compute, with typically similar accuracy.</p></div></details>
+  <details class="qa"><summary>Why does a GRU avoid vanishing gradients?</summary><div class="ans"><p>The update equation contains a direct, gated linear path z⊙h<sub>t−1</sub>, so ∂h<sub>t</sub>/∂h<sub>t−1</sub> includes diag(z). With z ≈ 1, gradients flow through many steps without repeated squashing, much like the LSTM cell path or a residual connection.</p></div></details>
+  <details class="qa"><summary>What does the reset gate let the model do that the update gate can't?</summary><div class="ans"><p>Compute a fresh candidate that ignores the past (r ≈ 0), e.g. at the start of a new session or topic, while the update gate still decides whether to adopt it. Without r, every candidate would be contaminated by the old state.</p></div></details>
+  <details class="qa"><summary>When would you pick an LSTM over a GRU?</summary><div class="ans"><p>When validation shows it's better, typically on very long dependencies or language modelling, or when you need independent control of keeping and writing (keep all old memory and also add new). Otherwise a GRU is cheaper, often as good, and a sensible first try.</p></div></details>
+  <details class="qa"><summary>Parameter count of a GRU layer with input 32, hidden 128?</summary><div class="ans"><p>3·(32·128 + 128·128 + 2·128) = 3·20,736 = 62,208 in PyTorch (two bias vectors).</p></div></details>
+  <details class="qa"><summary>How would you handle irregularly spaced events with a GRU?</summary><div class="ans"><p>Add time-since-previous-event (log-scaled) and calendar features as inputs. For missing measurements, use masks and GRU-D-style learned decay of the last observation toward the mean. Alternatively, use continuous-time models or time-aware transformers.</p></div></details>
+</main>
+<script>
+(function(){
+  const $=id=>document.getElementById(id),sig=DLP_sig,T=20;
+  const noiseAt=t=>((Math.sin(t*91.7+3.1)*43758.5453)%1);
+  function run(){
+    const pat=$('gpat').value,bz=+$('bz').value,br=+$('br').value,nz=+$('gnz').value;
+    $('bzv').textContent=bz.toFixed(1);$('brv').textContent=br.toFixed(1);$('gnzv').textContent=nz.toFixed(2);
+    let h=0,rh=0;const Hs=[],Ns=[],R=[],X=[],rows=[];
+    for(let t=0;t<T;t++){
+      const sigTok=t===0, sess=pat==='sess'&&t===11;
+      const x=sigTok?(pat==='neg'?-1:1):sess?0:noiseAt(t)*nz;
+      const r=sig(br-(sess?10:0)), z=sig(bz-((sigTok||sess)?12:0));
+      const n=Math.tanh(2*x+r*(1.5*h));
+      h=(1-z)*n+z*h; rh=Math.tanh(0.9*rh+1.5*x);
+      Hs.push(h);Ns.push(n);R.push(rh);X.push(x);
+      if(t<4||sess||t===T-1)rows.push([t+1,x,r,z,n,h,sess]);
+    }
+    DLP_seriesChart($('gc'),[{name:'input xₜ',values:X,color:'#e2554f',bars:true},{name:'GRU state hₜ',values:Hs,color:'accent'},{name:'candidate nₜ',values:Ns,color:'#0f766e',dash:[5,4]},{name:'vanilla RNN hₜ',values:R,color:'#b45309',dash:[2,3]}],{min:-1.2,max:1.2,height:260});
+    $('gtab').innerHTML='<tr><th>step</th><th>x</th><th>reset r</th><th>update z (keep)</th><th>cand n</th><th>state h</th></tr>'+rows.map(r=>`<tr${r[6]?' style="background:var(--coral-soft)"':''}><td>t${r[0]}${r[6]?' NEW SESSION':''}</td>${r.slice(1,6).map(v=>`<td>${v.toFixed(3)}</td>`).join('')}</tr>`).join('');
+    const kept=Hs[T-1]/Hs[0];
+    $('gout').innerHTML=`Written at t1: <b>${Hs[0].toFixed(3)}</b> → state at t${T}: <b>${Hs[T-1].toFixed(3)}</b> (${(kept*100).toFixed(0)}%) &nbsp;|&nbsp; vanilla RNN: <b>${R[T-1].toFixed(3)}</b> `+
+      (pat==='sess'?'&nbsp;|&nbsp; after the new-session token the unit adopted a fresh candidate, with the reset gate ignoring the old state':
+      (kept>0.7&&kept<1.3?'&nbsp;|&nbsp; <span style="color:var(--green)">GRU remembered ✓</span>':kept<0.3?'&nbsp;|&nbsp; <span style="color:var(--coral)">forgotten: raise the keep bias b<sub>z</sub></span>':'&nbsp;|&nbsp; <span style="color:var(--amber)">partly overwritten by noise</span>'));
+  }
+  ['gpat','bz','br','gnz'].forEach(id=>$(id).addEventListener('input',run));
+  DLP_paramCalc('pc','GRU');run();
+  window.addEventListener('resize',run);window.addEventListener('dlp-theme',run);
+})();
+</script>
+</body>
+</html>

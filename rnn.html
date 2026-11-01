@@ -2,125 +2,261 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>05 · RNN, LSTM, GRU · DL Playbook</title>
-<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script>
+<title>Sequences I · Recurrent neural networks (RNN) · DL Playbook</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script><script src="assets/seq.js"></script>
 </head>
 <body data-page="rnn">
 <main>
-  <div class="eyebrow">Lesson 05 · Week 4 · Sequences</div>
-  <h1>Sequence models: RNN, LSTM, GRU</h1>
-  <p class="lede">When order matters (a customer's last 50 transactions, a clickstream, a sentence), you need a model with <b>memory</b>. RNNs were the first answer, LSTMs fixed their forgetfulness, and transformers have since replaced them in most places. Interviewers still love the "why LSTM over RNN" question.</p>
-  <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Parameters &amp; tuning per model</div><p>Every model on this page has a card in the <a href="models.html#sequence">Model encyclopedia</a> with its key parameters, starting values, how to improve it and when to avoid it.</p></div>
-  <div class="toc"><a href="#rnn">Vanilla RNN</a><a href="#vanish">Vanishing gradients</a><a href="#lstm">LSTM</a><a href="#gru">GRU</a><a href="#variants">Variants</a><a href="#when">When to use</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
+  <div class="eyebrow">Sequences I · Week 4 · Start here before LSTM and GRU</div>
+  <h1>Recurrent neural networks (RNN)</h1>
+  <p class="lede">An RNN reads a sequence one step at a time and carries a <b>hidden state</b>, a running summary of everything it has seen so far. It's the foundation for <a href="lstm.html">LSTM</a> and <a href="gru.html">GRU</a>, and the place where the most famous deep learning problem shows up: <b>vanishing gradients</b>.</p>
+  <div class="callout win" style="margin:6px 0 4px"><div class="tag">📚 Three-part series</div><p><b>I. RNN</b> (this page: sequence basics, BPTT, vanishing gradients, shapes, variants) → <a href="lstm.html"><b>II. LSTM</b></a> (gates and cell state in depth) → <a href="gru.html"><b>III. GRU</b></a> (the lighter gated model, and LSTM vs GRU). Parameters for each are also in the <a href="models.html#sequence">Model encyclopedia</a>.</p></div>
+  <div class="toc"><a href="#why">Why sequences need memory</a><a href="#shapes">Task shapes</a><a href="#cell">The RNN cell</a><a href="#sim">Step-through simulator</a><a href="#bptt">BPTT</a><a href="#vanish">Vanishing &amp; exploding</a><a href="#torch">PyTorch shapes</a><a href="#params">Parameter count</a><a href="#variants">Variants</a><a href="#data">Preparing sequence data</a><a href="#hp">Hyperparameters</a><a href="#when">When to use what</a><a href="#code">Code</a><a href="#qa">Q&amp;A</a></div>
 
-  <h2 id="rnn">Vanilla RNN: a loop with memory</h2>
-  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Read a sentence one word at a time while keeping a running "summary" in your head. At each word, you update the summary using the new word and the old summary. That summary is the <b>hidden state</b>. The same update rule (the same weights) is used at every step.</p></div>
-  <div class="callout math"><div class="tag">📐 The recurrence</div><div class="formula">h<sub>t</sub> = tanh(W<sub>h</sub> h<sub>t−1</sub> + W<sub>x</sub> x<sub>t</sub> + b) &nbsp;&nbsp; ŷ<sub>t</sub> = W<sub>y</sub> h<sub>t</sub></div>
-  <p>Training unrolls the loop over time and runs ordinary backprop through it. This is called <b>Backpropagation Through Time (BPTT)</b>. Long sequences are often cut into chunks (truncated BPTT).</p></div>
+  <h2 id="why">Why sequences need memory</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Think of reading a bank statement line by line. To judge whether today's ₹80,000 transfer is odd, you need to remember what came before: small UPI payments, salary on the 1st, nothing overseas. An MLP sees one fixed-size input and has no memory. An RNN keeps a notebook (the hidden state) and updates it after reading each line. It uses the <b>same update rule at every step</b>, so it works for sequences of any length.</p></div>
+  <div class="table-wrap"><table>
+    <tr><th>Problem with a plain MLP</th><th>How an RNN fixes it</th></tr>
+    <tr><td>Needs a fixed input size</td><td>Processes one step at a time, so any length works</td></tr>
+    <tr><td>Learns "position 3 = amount" separately for every position</td><td><b>Weight sharing</b> across time: one set of weights for all steps</td></tr>
+    <tr><td>No notion of order</td><td>The hidden state is built in order, so order matters</td></tr>
+  </table></div>
 
-  <h2 id="vanish">Why vanilla RNNs forget: vanishing gradients</h2>
+  <h2 id="shapes">The five sequence task shapes</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Shape</th><th>Input → output</th><th>Example</th><th>What you read from the RNN</th></tr>
+    <tr><td>One-to-one</td><td>vector → label</td><td>Ordinary classification (no RNN needed)</td><td>—</td></tr>
+    <tr><td><b>Many-to-one</b></td><td>sequence → one label</td><td>Is this card's last-50-transaction sequence fraudulent? Sentiment of a review.</td><td>Final hidden state h<sub>T</sub> (or pooled outputs)</td></tr>
+    <tr><td>One-to-many</td><td>vector → sequence</td><td>Image captioning, music generation</td><td>Feed the output back as the next input</td></tr>
+    <tr><td><b>Many-to-many (aligned)</b></td><td>a label per step</td><td>NER (tag every word), per-transaction anomaly flag</td><td>Every output h<sub>t</sub></td></tr>
+    <tr><td><b>Seq2seq (unaligned)</b></td><td>sequence → different-length sequence</td><td>Translation, summarisation, multi-step forecasting</td><td>Encoder state → decoder</td></tr>
+  </table></div>
+
+  <h2 id="cell">The RNN cell</h2>
+  <div class="callout math"><div class="tag">📐 The recurrence (memorise this)</div>
+    <div class="formula">h<sub>t</sub> = tanh( W<sub>xh</sub> x<sub>t</sub> + W<sub>hh</sub> h<sub>t−1</sub> + b ) &nbsp;&nbsp;&nbsp; ŷ<sub>t</sub> = W<sub>hy</sub> h<sub>t</sub> + b<sub>y</sub></div>
+    <ul>
+      <li><b>x<sub>t</sub></b>: input at step t (size I), e.g. [amount, MCC embedding, hour].</li>
+      <li><b>h<sub>t−1</sub></b>: previous hidden state (size H), starting from h<sub>0</sub> = 0.</li>
+      <li><b>W<sub>xh</sub></b> (H×I) reads the new input. <b>W<sub>hh</sub></b> (H×H) decides how the old memory is carried forward. Both are <b>shared over all time steps</b>.</li>
+      <li><b>tanh</b> squashes to (−1, 1) so the state doesn't blow up when it's fed back in.</li>
+    </ul>
+  </div>
+  <div class="callout layman"><div class="tag">🧒 "Unrolling"</div><p>Draw the loop out over time and you get a very deep feed-forward network with one layer per time step, where every layer shares the same weights. A 100-step sequence means a 100-layer-deep computation. That's why RNNs inherit all the problems of very deep networks.</p></div>
+
+  <h2 id="sim">Step-through simulator</h2>
+  <div class="widget">
+    <div class="widget-title">A one-neuron RNN reading a sequence</div>
+    <div class="widget-sub">h<sub>t</sub> = tanh(w<sub>h</sub>·h<sub>t−1</sub> + w<sub>x</sub>·x<sub>t</sub> + b). Choose an input pattern and watch how long the memory of the early spike survives. A small w<sub>h</sub> forgets fast; w<sub>h</sub> above 1 saturates and gets stuck.</div>
+    <div class="controls">
+      <div class="control"><label>input pattern</label><select id="pat"><option value="spike">spike at t1, then zeros</option><option value="step">step: 0s then 1s</option><option value="alt">alternating ±1</option><option value="noise">spike, then small noise</option></select></div>
+      <div class="control"><label><span>w<sub>h</sub> (memory weight)</span> <b id="whv"></b></label><input type="range" id="wh" min="0" max="2" step="0.05" value="0.8"></div>
+      <div class="control"><label><span>w<sub>x</sub> (input weight)</span> <b id="wxv"></b></label><input type="range" id="wx" min="0" max="3" step="0.05" value="1.5"></div>
+      <div class="control"><label>bias b <b id="bv"></b></label><input type="range" id="b" min="-1" max="1" step="0.05" value="0"></div>
+    </div>
+    <canvas id="simc"></canvas>
+    <div class="readout" id="simout"></div>
+  </div>
+
+  <h2 id="bptt">Training: backpropagation through time (BPTT)</h2>
+  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Unroll the network over the sequence, compute the loss (at the end for many-to-one, or summed over every step for many-to-many), then run ordinary backprop backwards through all the time steps. Because the weights are shared, the gradient for W<sub>hh</sub> is the <b>sum</b> of its gradients from every step.</p></div>
+  <div class="callout math"><div class="tag">📐 Why long sequences are hard</div>
+    <div class="formula">∂h<sub>t</sub>/∂h<sub>k</sub> = ∏<sub>j=k+1..t</sub> diag(tanh′(a<sub>j</sub>)) · W<sub>hh</sub></div>
+    <p>The gradient linking step k to step t is a <b>product of (t − k) Jacobians</b>. If the largest singular value of W<sub>hh</sub> times tanh′ is below 1, it shrinks exponentially and <b>vanishes</b>. Above 1, it <b>explodes</b>. Since tanh′ ≤ 1, vanishing is the usual case.</p>
+    <p><b>Truncated BPTT</b>: backpropagate only through the last k steps (e.g. 50–200) of a long stream to save memory, while still carrying the hidden state forward. The model then can't learn dependencies longer than k through gradients.</p>
+  </div>
+
+  <h2 id="vanish">Vanishing and exploding gradients</h2>
   <div class="widget">
     <div class="widget-title">How much does step 1 still influence step T?</div>
-    <div class="widget-sub">The gradient flowing back k steps is multiplied by about (w · tanh′)<sup>k</sup> in an RNN. In an LSTM, the cell-state path is multiplied by the forget gate f instead, which the model can learn to keep near 1.</div>
+    <div class="widget-sub">Gradient factor flowing back k steps (log scale). RNN: (w·tanh′)<sup>k</sup>. LSTM: cell path ≈ f<sup>k</sup> (forget gate). GRU: direct path ≈ z<sup>k</sup> (update gate keeping the old state). Gates the model can learn to keep near 1 are what fix the problem.</div>
     <div class="controls">
-      <div class="control"><label>RNN recurrent weight |w| <b id="wv"></b></label><input type="range" id="w" min="0.3" max="1.6" step="0.01" value="0.9"></div>
-      <div class="control"><label>LSTM forget gate f <b id="fv"></b></label><input type="range" id="f" min="0.5" max="1" step="0.01" value="0.97"></div>
-      <div class="control"><label>sequence length T <b id="Tv"></b></label><input type="range" id="T" min="5" max="100" value="50"></div>
+      <div class="control"><label><span>RNN |w<sub>hh</sub>|</span> <b id="vwv"></b></label><input type="range" id="vw" min="0.3" max="1.6" step="0.01" value="0.9"></div>
+      <div class="control"><label>LSTM forget gate f / GRU keep gate z <b id="vfv"></b></label><input type="range" id="vf" min="0.5" max="1" step="0.01" value="0.97"></div>
+      <div class="control"><label>sequence length T <b id="vTv"></b></label><input type="range" id="vT" min="5" max="150" value="60"></div>
     </div>
     <canvas id="vc"></canvas>
     <div class="readout" id="vout"></div>
   </div>
-  <div class="callout interview"><div class="tag">🎯 Interview point</div><p>Exploding gradients (|w| &gt; 1) are fixed with <b>gradient clipping</b>. Vanishing gradients (|w| &lt; 1) need an <b>architecture change</b>: LSTM/GRU gates, residual connections, or attention.</p></div>
-
-  <h2 id="lstm">LSTM: a conveyor belt with three gates</h2>
-  <div class="callout layman"><div class="tag">🧒 In plain English</div><p>Picture a conveyor belt (the <b>cell state</b>) running through time. Information can ride it for a long way unchanged. Three valves control it: the <b>forget gate</b> decides what to throw off the belt ("the user changed city, so drop the old location"), the <b>input gate</b> decides what new information to put on, and the <b>output gate</b> decides what to reveal as this step's output. Because the belt is updated by <i>adding</i> rather than repeated multiplying, gradients survive over long distances.</p></div>
-  <div class="callout math"><div class="tag">📐 The equations (σ = sigmoid, outputs 0–1 "valves")</div>
-    <p style="font-family:var(--serif);font-size:17px;line-height:2">
-    f<sub>t</sub> = σ(W<sub>f</sub>[h<sub>t−1</sub>, x<sub>t</sub>] + b<sub>f</sub>) &nbsp;— forget gate<br>
-    i<sub>t</sub> = σ(W<sub>i</sub>[h<sub>t−1</sub>, x<sub>t</sub>] + b<sub>i</sub>) &nbsp;— input gate<br>
-    c̃<sub>t</sub> = tanh(W<sub>c</sub>[h<sub>t−1</sub>, x<sub>t</sub>] + b<sub>c</sub>) &nbsp;— candidate memory<br>
-    <b>c<sub>t</sub> = f<sub>t</sub> ⊙ c<sub>t−1</sub> + i<sub>t</sub> ⊙ c̃<sub>t</sub></b> &nbsp;— additive update (the key)<br>
-    o<sub>t</sub> = σ(W<sub>o</sub>[h<sub>t−1</sub>, x<sub>t</sub>] + b<sub>o</sub>), &nbsp; h<sub>t</sub> = o<sub>t</sub> ⊙ tanh(c<sub>t</sub>)</p>
-    <p>Parameters: 4 × (hidden·(hidden + input) + hidden). The "4" is the three gates plus the candidate.</p>
-  </div>
-
-  <h2 id="gru">GRU: the lighter LSTM</h2>
-  <p>A GRU merges the cell and hidden state and uses two gates: an <b>update gate</b> z (how much to keep the old state, a combined forget and input) and a <b>reset gate</b> r (how much past to use when computing the candidate). It has about 25% fewer parameters than an LSTM, trains faster, and performs similarly on most tasks. Try a GRU first when data is limited.</p>
   <div class="table-wrap"><table>
-    <tr><th></th><th>RNN</th><th>LSTM</th><th>GRU</th></tr>
-    <tr><td>Gates</td><td>0</td><td>3 (forget, input, output)</td><td>2 (update, reset)</td></tr>
-    <tr><td>States</td><td>h</td><td>h and c</td><td>h</td></tr>
-    <tr><td>Long memory</td><td>Poor (~10 steps)</td><td>Good (~100s of steps)</td><td>Good</td></tr>
-    <tr><td>Speed</td><td>Fast</td><td>Slowest</td><td>Medium</td></tr>
+    <tr><th>Problem</th><th>Symptom</th><th>Fixes</th></tr>
+    <tr><td><b>Exploding</b></td><td>Loss jumps to NaN or spikes; huge gradient norms</td><td><b>Gradient clipping</b> by norm (0.5–5; 1.0 typical), lower LR, orthogonal init of W<sub>hh</sub></td></tr>
+    <tr><td><b>Vanishing</b></td><td>The model ignores anything more than ~10–20 steps back; early layers or steps get almost no gradient</td><td><b>Gated cells (LSTM/GRU)</b>, skip/residual connections over time, attention, identity/orthogonal init (IRNN), shorter effective sequences (aggregate events), or switch to TCN/transformers</td></tr>
   </table></div>
 
-  <h2 id="variants">Useful variants</h2>
-  <div class="grid">
-    <div class="card"><h4>Bidirectional</h4><p>One RNN reads forwards and another backwards, then their states are concatenated. Good for NER and classification when the full sequence is available. Not usable for real-time forecasting.</p></div>
-    <div class="card"><h4>Stacked</h4><p>2–3 RNN layers on top of each other. More than that rarely helps.</p></div>
-    <div class="card"><h4>Seq2Seq (encoder–decoder)</h4><p>The encoder compresses the input into a context and the decoder generates the output. Its fixed-size bottleneck led to <b>attention</b>, and attention led to transformers.</p></div>
-    <div class="card"><h4>1D CNN / TCN</h4><p>Causal dilated convolutions over time. They run in parallel and are often as good as LSTMs for forecasting and event sequences.</p></div>
+  <h2 id="torch">PyTorch API and tensor shapes (a frequent source of bugs)</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Tensor</th><th>Shape (batch_first=True)</th><th>Meaning</th></tr>
+    <tr><td>input</td><td>(B, T, input_size)</td><td>Batch of sequences (pad to the same T)</td></tr>
+    <tr><td>h_0 (optional)</td><td>(num_layers × D, B, hidden_size)</td><td>Initial state; zeros if omitted. D = 2 if bidirectional</td></tr>
+    <tr><td><b>output</b></td><td>(B, T, D × hidden_size)</td><td>Top layer's hidden state at <i>every</i> step. Use for many-to-many.</td></tr>
+    <tr><td><b>h_n</b></td><td>(num_layers × D, B, hidden_size)</td><td>Final state of <i>every</i> layer/direction. Use <code>h_n[-1]</code> for many-to-one. <b>Not</b> batch-first, even with batch_first=True!</td></tr>
+  </table></div>
+  <div class="callout trap"><div class="tag">⚠️ The classic padding bug</div><p>With padded sequences, <code>output[:, -1]</code> is the state after reading <b>padding</b> for every shorter sequence. Use <code>pack_padded_sequence</code> and take <code>h_n[-1]</code>, or gather the output at index <code>length − 1</code> for each sequence.</p></div>
+
+  <h2 id="params">Parameter count</h2>
+  <div class="callout math"><div class="tag">📐 Per layer, per direction (PyTorch keeps two bias vectors)</div><div class="formula">params = g × (I·H + H·H + 2H), &nbsp;&nbsp; g = 1 (RNN), 3 (GRU), 4 (LSTM)</div><p>Layers after the first take input size H × D. The count <b>doesn't depend on sequence length</b> (weight sharing). The calculator below matches <code>sum(p.numel() for p in model.parameters())</code> exactly.</p></div>
+  <div class="widget"><div class="widget-title">Parameter &amp; shape calculator</div><div id="pc"></div></div>
+
+  <h2 id="variants">Variants and extensions</h2>
+  <div class="grid two">
+    <div class="card"><h4>Stacked (deep) RNN</h4><p>Layer 2 reads layer 1's outputs. 2–3 layers usually help; more rarely does. Add dropout <i>between</i> layers (the <code>dropout</code> argument).</p></div>
+    <div class="card"><h4>Bidirectional</h4><p>One RNN reads forwards and another backwards; the outputs are concatenated (size 2H). Great when the whole sequence is known (NER, classifying a finished session). <b>Not</b> for real-time scoring or forecasting, because it would peek at the future.</p></div>
+    <div class="card"><h4>Encoder–decoder (seq2seq)</h4><p>An encoder compresses the input; a decoder generates the output step by step from the encoder's final state. <b>Teacher forcing</b> feeds the true previous token during training; <b>beam search</b> keeps the top-k partial outputs at inference.</p></div>
+    <div class="card"><h4>Attention on top of an RNN</h4><p>Instead of squeezing everything into h<sub>T</sub>, the decoder (or a classifier) takes a learned weighted average of all hidden states. This fixed the bottleneck and led directly to <a href="transformers.html">transformers</a>.</p></div>
+    <div class="card"><h4>Stateful RNN</h4><p>Carry h<sub>T</sub> from one batch into the next for very long streams (sensor data, a customer's lifetime of events). Call <code>h = h.detach()</code> between batches, otherwise backprop runs through the whole history.</p></div>
+    <div class="card"><h4>Gated RNNs</h4><p>Add learnable gates that decide what to keep and what to overwrite: <a href="lstm.html"><b>LSTM</b></a> (1997) and <a href="gru.html"><b>GRU</b></a> (2014). In practice you almost always use one of these instead of a vanilla RNN.</p></div>
   </div>
 
-  <h2 id="when">When to use RNNs today</h2>
-  <div class="callout win"><div class="tag">✅ Practical guidance</div>
+  <h2 id="data">Preparing sequence data (where most real problems are)</h2>
   <ul>
-    <li><b>Streaming / on-device / low latency</b>: the RNN state updates in O(1) per new event. Good for real-time fraud scoring on each new card swipe.</li>
-    <li><b>Small or medium sequential data</b>: GRU/LSTM are cheaper and less data-hungry than transformers.</li>
-    <li><b>Long text, big data, or anything that benefits from pretraining</b>: use transformers.</li>
-    <li>Modern alternatives are <b>state-space models (Mamba)</b>, which have RNN-like inference cost with transformer-like quality on long sequences. Worth one sentence in an interview.</li>
-  </ul></div>
-  <div class="callout layman"><div class="tag">🏦 Industry example: transaction-sequence fraud</div><p>Each card's last N transactions (amount, MCC embedding, time-delta, country, channel) go into a GRU. The final hidden state is a "behaviour fingerprint". Concatenate it with the current transaction's features and score fraud. A sudden overseas high-value purchase after a history of small local ones looks anomalous <i>relative to that customer</i>, which a per-row model cannot see.</p></div>
+    <li><b>Define the sequence</b>: per customer, the last N events before the prediction time. <b>Never include events after the prediction timestamp</b>; this is the most common leakage in sequence models.</li>
+    <li><b>Choose N (lookback)</b> from the business rhythm (e.g. 30 days or 50 transactions) and validate a few options.</li>
+    <li><b>Per-step features</b>: numeric (log amount, standardised), categorical → embeddings (MCC, merchant, channel), and <b>time-delta since the previous event</b> (RNNs see order, not elapsed time).</li>
+    <li><b>Padding and masking</b>: pad with a reserved index 0, pack sequences, and mask the loss on padded steps for many-to-many tasks.</li>
+    <li><b>Bucketing</b>: batch sequences of similar length together to cut wasted padding compute.</li>
+    <li><b>Splits</b>: split by time (and by customer if you need to generalise to new customers).</li>
+  </ul>
 
-  <h2 id="code">Code: GRU over transaction sequences</h2>
-  <script type="text/plain" class="snippet" data-title="pytorch — sequence classifier with padding">
+  <h2 id="hp">Hyperparameters (apply to RNN, LSTM and GRU)</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Parameter</th><th>Typical start</th><th>Effect / when to change</th></tr>
+    <tr><td>hidden_size</td><td>64–256</td><td>Capacity. Raise if underfitting; lower if overfitting or slow.</td></tr>
+    <tr><td>num_layers</td><td>1–2 (max ~3)</td><td>Depth over features. Deeper is harder to train, with small gains.</td></tr>
+    <tr><td>dropout (between layers)</td><td>0.1–0.3</td><td>Only active when num_layers ≥ 2. Also add dropout on the embeddings and before the head.</td></tr>
+    <tr><td>learning rate</td><td>1e-3 (Adam/AdamW)</td><td>Lower (3e-4) if loss spikes; use ReduceLROnPlateau or cosine.</td></tr>
+    <tr><td>gradient clipping (max norm)</td><td>1.0</td><td>Essential for recurrent nets. Raise to 5 if learning seems throttled.</td></tr>
+    <tr><td>sequence length / truncation</td><td>Business-driven (30–200)</td><td>Longer = more context, more compute, harder optimisation.</td></tr>
+    <tr><td>batch size</td><td>32–256</td><td>Bigger is faster on GPU; use bucketing.</td></tr>
+    <tr><td>bidirectional</td><td>False for real-time; True for offline tagging</td><td>Doubles parameters and output size.</td></tr>
+    <tr><td>initialisation</td><td>Orthogonal W<sub>hh</sub>; LSTM forget bias = 1</td><td>Keeps signals stable over time.</td></tr>
+  </table></div>
+
+  <h2 id="when">When to use RNN-family models today</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Situation</th><th>Choose</th><th>Why</th></tr>
+    <tr><td>Streaming events scored in real time on CPU/device</td><td>GRU / LSTM</td><td>O(1) update per new event: keep the state and update it as each event arrives</td></tr>
+    <tr><td>Small to medium sequential data</td><td>GRU / LSTM</td><td>Fewer parameters and less data-hungry than transformers</td></tr>
+    <tr><td>Long text, lots of data, pretrained models available</td><td>Transformer</td><td>Parallel training, long-range attention, transfer learning</td></tr>
+    <tr><td>Forecasting with fixed lookback, fast training</td><td>TCN / N-HiTS / LightGBM</td><td>Parallel and often as accurate (see <a href="timeseries.html">time series</a>)</td></tr>
+    <tr><td>Very long sequences, linear-time inference</td><td>State-space models (Mamba), xLSTM</td><td>RNN-like inference cost with strong long-range modelling</td></tr>
+    <tr><td>Tabular aggregates already capture the signal</td><td>GBDT</td><td>Don't use a sequence model if the order adds nothing</td></tr>
+  </table></div>
+
+  <h2 id="code">Code</h2>
+  <script type="text/plain" class="snippet" data-title="an RNN cell from scratch, checked against nn.RNN">
+    import torch, torch.nn as nn
+
+    torch.manual_seed(0)
+    B, T, I, H = 2, 5, 3, 4
+    x = torch.randn(B, T, I)
+    rnn = nn.RNN(I, H, batch_first=True)          # tanh by default
+
+    W_ih, W_hh = rnn.weight_ih_l0, rnn.weight_hh_l0  # (H, I), (H, H)
+    b_ih, b_hh = rnn.bias_ih_l0, rnn.bias_hh_l0
+    h = torch.zeros(B, H)
+    outs = []
+    for t in range(T):                             # the recurrence, one step at a time
+        h = torch.tanh(x[:, t] @ W_ih.T + b_ih + h @ W_hh.T + b_hh)
+        outs.append(h)
+    manual = torch.stack(outs, dim=1)              # (B, T, H)
+
+    out, h_n = rnn(x)
+    print(torch.allclose(manual, out, atol=1e-6), torch.allclose(h, h_n[0], atol=1e-6))  # True True
+  </script>
+  <script type="text/plain" class="snippet" data-title="many-to-one classifier with packing (correct last state for padded sequences)">
     import torch, torch.nn as nn
     from torch.nn.utils.rnn import pack_padded_sequence
 
-    class TxnGRU(nn.Module):
-        def __init__(self, n_mcc, n_num, emb=16, hidden=64):
+    class SeqClassifier(nn.Module):
+        def __init__(self, n_tokens, emb=32, hidden=64, cell="gru", bidirectional=False):
             super().__init__()
-            self.mcc = nn.Embedding(n_mcc, emb, padding_idx=0)
-            self.gru = nn.GRU(emb + n_num, hidden, num_layers=2,
-                              batch_first=True, dropout=0.2)
-            self.head = nn.Linear(hidden, 1)
+            self.emb = nn.Embedding(n_tokens, emb, padding_idx=0)
+            RNN = {"rnn": nn.RNN, "gru": nn.GRU, "lstm": nn.LSTM}[cell]
+            self.rnn = RNN(emb, hidden, num_layers=2, batch_first=True,
+                           dropout=0.2, bidirectional=bidirectional)
+            self.D = 2 if bidirectional else 1
+            self.head = nn.Linear(hidden * self.D, 1)
 
-        def forward(self, mcc_seq, num_seq, lengths):
-            x = torch.cat([self.mcc(mcc_seq), num_seq], dim=-1)       # (B, T, emb+n_num)
-            packed = pack_padded_sequence(x, lengths.cpu(), batch_first=True,
-                                          enforce_sorted=False)        # skip the padding
-            _, h = self.gru(packed)                                     # h: (layers, B, hidden)
-            return self.head(h[-1]).squeeze(1)                          # last layer's final state
+        def forward(self, tokens, lengths):
+            packed = pack_padded_sequence(self.emb(tokens), lengths.cpu(),
+                                          batch_first=True, enforce_sorted=False)
+            _, h_n = self.rnn(packed)
+            if isinstance(h_n, tuple):           # LSTM returns (h_n, c_n)
+                h_n = h_n[0]
+            last = torch.cat([h_n[-1], h_n[-2]], -1) if self.D == 2 else h_n[-1]
+            return self.head(last).squeeze(-1)
 
-    # nn.LSTM is a drop-in swap: returns (out, (h, c)) instead of (out, h)
+    model = SeqClassifier(n_tokens=500)
+    tokens = torch.tensor([[5, 9, 2, 0, 0], [7, 1, 3, 8, 4]])   # 0 = padding
+    print(model(tokens, torch.tensor([3, 5])).shape)             # torch.Size([2])
+  </script>
+  <script type="text/plain" class="snippet" data-title="many-to-many tagger with a masked loss">
+    class Tagger(nn.Module):
+        def __init__(self, n_tokens, n_tags, emb=32, hidden=64):
+            super().__init__()
+            self.emb = nn.Embedding(n_tokens, emb, padding_idx=0)
+            self.rnn = nn.LSTM(emb, hidden, batch_first=True, bidirectional=True)
+            self.out = nn.Linear(2 * hidden, n_tags)
+        def forward(self, tokens):
+            h, _ = self.rnn(self.emb(tokens))      # (B, T, 2H): one vector per step
+            return self.out(h)                     # (B, T, n_tags)
+
+    tagger = Tagger(500, n_tags=5)
+    logits = tagger(tokens)
+    tags = torch.tensor([[1, 2, 0, -100, -100], [3, 3, 1, 4, 0]])   # -100 = ignore padding
+    loss = nn.CrossEntropyLoss(ignore_index=-100)(logits.reshape(-1, 5), tags.reshape(-1))
+  </script>
+  <script type="text/plain" class="snippet" data-title="training loop essentials for recurrent nets">
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
+    for tokens, lengths, y in loader:
+        opt.zero_grad()
+        loss = nn.functional.binary_cross_entropy_with_logits(model(tokens, lengths), y)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)   # always clip RNNs
+        opt.step()
   </script>
 
   <h2 id="qa">Interview Q&amp;A</h2>
-  <details class="qa"><summary>Why do vanilla RNNs suffer from vanishing gradients, and how does LSTM fix it?</summary><div class="ans"><p>BPTT multiplies the same Jacobian (W<sub>h</sub>·tanh′) at every step, so over k steps the gradient scales like λ<sup>k</sup> and vanishes if λ&lt;1. LSTM's cell state is updated additively, c<sub>t</sub> = f·c<sub>t−1</sub> + i·c̃, so ∂c<sub>t</sub>/∂c<sub>t−1</sub> ≈ f. The model can learn f≈1 to carry information (and gradients) across long gaps: the "constant error carousel".</p></div></details>
-  <details class="qa"><summary>LSTM vs GRU: which would you pick?</summary><div class="ans"><p>They're usually within noise of each other. A GRU has fewer parameters, trains faster and suits smaller data. An LSTM's separate cell state can help on very long dependencies. Try both if cheap; otherwise default to GRU, or move to a transformer for large data.</p></div></details>
-  <details class="qa"><summary>Why did transformers replace RNNs?</summary><div class="ans"><p>(1) Parallelism: RNNs process tokens one after another, while attention handles the whole sequence at once, so training on GPUs is much faster. (2) Long-range dependencies: any two tokens are one attention hop apart instead of T steps apart. (3) They scale with data and pretraining. The cost is O(n²) memory in sequence length.</p></div></details>
-  <details class="qa"><summary>What's teacher forcing?</summary><div class="ans"><p>When training a seq2seq decoder, you feed the <i>ground-truth</i> previous token as input instead of the model's own prediction. It speeds up convergence but creates exposure bias (at inference the model sees its own mistakes). Scheduled sampling mixes the two.</p></div></details>
-  <details class="qa"><summary>How do you handle variable-length sequences in a batch?</summary><div class="ans"><p>Pad to the batch maximum with a padding index, then use <code>pack_padded_sequence</code> (or masks for transformers) so padding doesn't affect the state or the loss. Bucket sequences of similar length together to reduce wasted padding.</p></div></details>
+  <details class="qa"><summary>What is the hidden state in an RNN?</summary><div class="ans"><p>A fixed-size vector that summarises the sequence seen so far. At each step it's recomputed from the new input and the previous state with the same weights: h<sub>t</sub> = tanh(W<sub>xh</sub>x<sub>t</sub> + W<sub>hh</sub>h<sub>t−1</sub> + b). It's the network's working memory.</p></div></details>
+  <details class="qa"><summary>Why do RNNs share weights across time steps?</summary><div class="ans"><p>So the same pattern is recognised wherever it occurs in the sequence, the parameter count doesn't grow with length, and the model can handle sequences longer than any seen in training. It's the time-axis version of a CNN sharing filters across space.</p></div></details>
+  <details class="qa"><summary>Explain BPTT and truncated BPTT.</summary><div class="ans"><p>BPTT unrolls the RNN over the sequence and applies ordinary backprop. The shared-weight gradients are summed over steps. Truncated BPTT only backpropagates through the last k steps while still carrying the state forward. It saves memory and time, but the model can't learn dependencies longer than k through gradients.</p></div></details>
+  <details class="qa"><summary>Why do vanilla RNNs suffer from vanishing gradients?</summary><div class="ans"><p>The gradient from step t back to step k is a product of t − k Jacobians W<sub>hh</sub>ᵀ·diag(tanh′). With tanh′ ≤ 1 and typical weights, its norm shrinks exponentially, so early steps get almost no learning signal and long-range dependencies aren't learned. If the norm exceeds 1, gradients explode instead.</p></div></details>
+  <details class="qa"><summary>How do you handle exploding vs vanishing gradients?</summary><div class="ans"><p>Exploding: gradient clipping (by norm), a lower LR, orthogonal initialisation. Vanishing: change the architecture with gated cells (LSTM/GRU), attention, residual connections, or TCNs/transformers. Clipping does nothing for vanishing gradients.</p></div></details>
+  <details class="qa"><summary>output vs h_n in PyTorch?</summary><div class="ans"><p><code>output</code> is the top layer's hidden state at every time step, shape (B, T, D·H) with batch_first. <code>h_n</code> is the last-step state of every layer and direction, shape (L·D, B, H), and it stays layer-first even with batch_first. Use output for tagging and h_n[-1] (with packing) for sequence classification.</p></div></details>
+  <details class="qa"><summary>When is a bidirectional RNN inappropriate?</summary><div class="ans"><p>Whenever predictions must be made before the future is known: real-time fraud scoring, next-event prediction, forecasting, streaming speech. The backward pass would leak future information.</p></div></details>
+  <details class="qa"><summary>What's teacher forcing and what problem does it create?</summary><div class="ans"><p>During seq2seq training the decoder is fed the ground-truth previous token rather than its own prediction. Training is faster and more stable, but at inference the model sees its own mistakes, which it never practised on (exposure bias). Mitigations: scheduled sampling, or beam search at inference.</p></div></details>
+  <details class="qa"><summary>RNN vs 1D-CNN/TCN vs transformer for sequences?</summary><div class="ans"><p>RNNs process steps sequentially and have O(1) streaming updates, which is good for real-time and small data, but they train slowly and struggle with long range. TCNs are parallel with a fixed receptive field. Transformers are parallel, connect any two positions directly and scale with data and pretraining, but cost O(n²) in sequence length.</p></div></details>
 </main>
 <script>
 (function(){
   const $=id=>document.getElementById(id);
-  function draw(){
-    const w0=+$('w').value,f=+$('f').value,T=+$('T').value;$('wv').textContent=w0.toFixed(2);$('fv').textContent=f.toFixed(2);$('Tv').textContent=T;
-    const {ctx,w,h,col}=DLP_canvas($('vc'),240);ctx.clearRect(0,0,w,h);
-    const lam=w0*0.8; // typical tanh' ≈ 0.8
-    const X=k=>40+k/T*(w-60);const Y=v=>{const lv=Math.log10(Math.max(v,1e-12));return 20+(2-lv)/14*(h-50);};
-    ctx.strokeStyle=col('--line');ctx.fillStyle=col('--muted');ctx.font='11px ui-monospace';
-    [1e2,1,1e-4,1e-8,1e-12].forEach(v=>{ctx.beginPath();ctx.moveTo(40,Y(v));ctx.lineTo(w-20,Y(v));ctx.stroke();ctx.fillText(v.toExponential(0),2,Y(v)+4);});
-    const line=(g,c)=>{ctx.strokeStyle=c;ctx.lineWidth=2.5;ctx.beginPath();for(let k=0;k<=T;k++){const v=Math.min(1e2,g(k));k?ctx.lineTo(X(k),Y(v)):ctx.moveTo(X(k),Y(v));}ctx.stroke();};
-    line(k=>Math.pow(lam,k),'#e2554f');line(k=>Math.pow(f,k),col('--accent'));
-    ctx.fillStyle='#e2554f';ctx.fillText('— RNN (w·tanh′)^k',w-190,h-30);ctx.fillStyle=col('--accent');ctx.fillText('— LSTM cell path f^k',w-190,h-14);
-    ctx.fillStyle=col('--muted');ctx.fillText('steps back k →',w/2-40,h-4);
-    const r=Math.pow(lam,T),l=Math.pow(f,T);
-    $('vout').innerHTML=`After ${T} steps → RNN gradient factor: <b>${r.toExponential(1)}</b> ${r>10?'(exploding 💥, so clip!)':r<1e-3?'(vanished 🫥)':''} &nbsp;|&nbsp; LSTM: <b>${l.toExponential(1)}</b>`;
+  const PAT={spike:t=>t===0?1:0,step:t=>t<6?0:1,alt:t=>t%2?-1:1,noise:t=>t===0?1:(Math.sin(t*12.9898)*43758.5453%1)*0.3};
+  function sim(){
+    const wh=+$('wh').value,wx=+$('wx').value,b=+$('b').value,p=$('pat').value,T=20;
+    $('whv').textContent=wh.toFixed(2);$('wxv').textContent=wx.toFixed(2);$('bv').textContent=b.toFixed(2);
+    const xs=[],hs=[];let h=0,infl=1;
+    for(let t=0;t<T;t++){const x=PAT[p](t);const a=wh*h+wx*x+b;h=Math.tanh(a);xs.push(x);hs.push(h);if(t>0)infl*=Math.abs(wh*(1-h*h));}
+    DLP_seriesChart($('simc'),[{name:'input xₜ',values:xs,color:'#e2554f',bars:true},{name:'hidden hₜ',values:hs,color:'accent'}],{min:-1,max:1,height:240});
+    const keep=hs.findIndex((v,t)=>t>0&&Math.abs(v)<0.05);
+    $('simout').innerHTML=`h₂₀ = <b>${hs[T-1].toFixed(3)}</b> &nbsp;|&nbsp; ∂h₂₀/∂h₁ ≈ <b>${infl.toExponential(1)}</b> ${infl<1e-3?'(<span style="color:var(--coral)">the early input barely matters to learning</span>)':infl>10?'(<span style="color:var(--coral)">exploding</span>)':''}`+(p==='spike'?` &nbsp;|&nbsp; memory of the spike ${keep>0?`fades below 0.05 by t${keep+1}`:'persists (but saturated states also block gradients)'}`:'');
   }
-  ['w','f','T'].forEach(id=>$(id).addEventListener('input',draw));draw();
-  window.addEventListener('resize',draw);window.addEventListener('dlp-theme',draw);
+  ['wh','wx','b','pat'].forEach(id=>$(id).addEventListener('input',sim));
+  function vanish(){
+    const w0=+$('vw').value,f=+$('vf').value,T=+$('vT').value;$('vwv').textContent=w0.toFixed(2);$('vfv').textContent=f.toFixed(2);$('vTv').textContent=T;
+    const {ctx,w,h,col}=DLP_canvas($('vc'),240);ctx.clearRect(0,0,w,h);
+    const lam=w0*0.8,X=k=>44+k/T*(w-64),Y=v=>{const lv=Math.log10(Math.max(v,1e-14));return 18+(2-lv)/16*(h-48);};
+    ctx.strokeStyle=col('--line');ctx.fillStyle=col('--muted');ctx.font='11px ui-monospace';
+    [1e2,1,1e-4,1e-8,1e-12].forEach(v=>{ctx.beginPath();ctx.moveTo(44,Y(v));ctx.lineTo(w-20,Y(v));ctx.stroke();ctx.fillText(v.toExponential(0),2,Y(v)+4);});
+    const line=(g,c,d)=>{ctx.strokeStyle=c;ctx.setLineDash(d||[]);ctx.lineWidth=2.5;ctx.beginPath();for(let k=0;k<=T;k++){const v=Math.min(1e2,g(k));k?ctx.lineTo(X(k),Y(v)):ctx.moveTo(X(k),Y(v));}ctx.stroke();ctx.setLineDash([]);};
+    line(k=>Math.pow(lam,k),'#e2554f');line(k=>Math.pow(f,k),col('--accent'));line(k=>Math.pow(Math.min(1,f+0.01),k),'#0f766e',[6,5]);
+    ctx.fillStyle='#e2554f';ctx.fillText('— RNN (w·tanh′)^k',w-200,h-36);ctx.fillStyle=col('--accent');ctx.fillText('— LSTM cell path f^k',w-200,h-22);ctx.fillStyle='#0f766e';ctx.fillText('- - GRU keep path z^k',w-200,h-8);
+    const r=Math.pow(lam,T),l=Math.pow(f,T);
+    $('vout').innerHTML=`After ${T} steps → RNN factor <b>${r.toExponential(1)}</b> ${r>10?'💥 exploding: clip':r<1e-3?'🫥 vanished':''} &nbsp;|&nbsp; gated path <b>${l.toExponential(1)}</b>`;
+  }
+  ['vw','vf','vT'].forEach(id=>$(id).addEventListener('input',vanish));
+  DLP_paramCalc('pc','RNN');sim();vanish();
+  window.addEventListener('resize',()=>{sim();vanish();});window.addEventListener('dlp-theme',()=>{sim();vanish();});
 })();
 </script>
 </body>
